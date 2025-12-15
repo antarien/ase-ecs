@@ -35,10 +35,8 @@ void SystemRegistry::create_all_systems(World& world) {
     auto sorted = get_sorted_systems();
 
     std::cout << "\n";
-    std::cout << "╔═══════════════════════════════════════════════════════════════╗\n";
-    std::cout << "║            ASE - ANTARES SIMULATION ENGINE                    ║\n";
-    std::cout << "║                   ECS System Bootstrap                        ║\n";
-    std::cout << "╚═══════════════════════════════════════════════════════════════╝\n";
+    std::cout << "\x1b[38;5;243m" << "ASE - ANTARES SIMULATION ENGINE" << "\x1b[0m\n";
+    std::cout << "\x1b[38;5;243m" << "ECS System Bootstrap" << "\x1b[0m\n";
     std::cout << "\n";
     std::cout << "[ASE] Registered systems: " << sorted.size() << "\n";
     std::cout << "\n";

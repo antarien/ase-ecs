@@ -4,26 +4,36 @@
 #include <iomanip>
 #include <chrono>
 #include <sstream>
-#include <algorithm>
 
 namespace ase::ecs {
 
-// Helper: format timestamp like spdlog
 static std::string timestamp() {
     auto now = std::chrono::system_clock::now();
     auto time = std::chrono::system_clock::to_time_t(now);
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         now.time_since_epoch()) % 1000;
-
     std::ostringstream ss;
     ss << std::put_time(std::localtime(&time), "%Y-%m-%d %H:%M:%S");
     ss << '.' << std::setfill('0') << std::setw(3) << ms.count();
     return ss.str();
 }
 
-// Helper: log with consistent format [timestamp] [level] [ASE] message
-static void boot_log(const char* level, const std::string& msg) {
-    std::cout << "[" << timestamp() << "] [" << level << "] [ASE] " << msg << std::endl;
+static void log_msg(const char* level, const std::string& msg) {
+    const char* color = (level[0] == 'E') ? "\x1b[38;5;167m" : "\x1b[38;5;71m";
+    std::cout << "\x1b[38;5;242m[" << timestamp() << "]\x1b[0m "
+              << "[" << color << level << "\x1b[0m] [ASE] " << msg << std::endl;
+}
+
+static void log_phase(const char* stage, const char* phase, const char* name, size_t cur, size_t total, const char* status) {
+    std::ostringstream ss;
+    ss << "[" << stage << "] [" << phase << "] [" << name << "] [" << cur << "/" << total << "] " << status;
+    log_msg("Inf", ss.str());
+}
+
+static void log_phase_err(const char* stage, const char* phase, const char* name, size_t cur, size_t total, const char* err) {
+    std::ostringstream ss;
+    ss << "[" << stage << "] [" << phase << "] [" << name << "] [" << cur << "/" << total << "] FAILED: " << err;
+    log_msg("Err", ss.str());
 }
 
 void World::start() {
@@ -31,32 +41,24 @@ void World::start() {
     size_t current = 0;
 
     std::cout << std::endl;
-    boot_log("Inf", "[Booting] Starting " + std::to_string(total) + " systems...");
+    log_msg("Inf", "[Booting] Starting " + std::to_string(total) + " systems...");
     std::cout << std::endl;
 
     for (auto& system : systems_) {
         ++current;
-
-        const char* phase_str = phase_name(static_cast<SystemPhase>(system->phase()));
+        const char* phase = phase_name(static_cast<SystemPhase>(system->phase()));
 
         try {
             system->on_start(registry_);
-
-            std::ostringstream ss;
-            ss << "[Booting] [" << phase_str << "] [" << system->name()
-               << "] [" << current << "/" << total << "] Started";
-            boot_log("Inf", ss.str());
+            log_phase("Booting", phase, system->name(), current, total, "Started");
         } catch (const std::exception& e) {
-            std::ostringstream ss;
-            ss << "[Booting] [" << phase_str << "] [" << system->name()
-               << "] [" << current << "/" << total << "] FAILED: " << e.what();
-            boot_log("Err", ss.str());
+            log_phase_err("Booting", phase, system->name(), current, total, e.what());
             throw;
         }
     }
 
     std::cout << std::endl;
-    boot_log("Inf", "[Booting] All " + std::to_string(total) + " systems started successfully");
+    log_msg("Inf", "[Booting] All " + std::to_string(total) + " systems started successfully");
     std::cout << std::endl;
 }
 
@@ -65,33 +67,24 @@ void World::stop() {
     size_t current = total;
 
     std::cout << std::endl;
-    boot_log("Inf", "[Shutdown] Stopping " + std::to_string(total) + " systems...");
+    log_msg("Inf", "[Shutdown] Stopping " + std::to_string(total) + " systems...");
     std::cout << std::endl;
 
     for (auto it = systems_.rbegin(); it != systems_.rend(); ++it) {
         auto& system = *it;
-
-        const char* phase_str = phase_name(static_cast<SystemPhase>(system->phase()));
+        const char* phase = phase_name(static_cast<SystemPhase>(system->phase()));
 
         try {
             system->on_stop(registry_);
-
-            std::ostringstream ss;
-            ss << "[Shutdown] [" << phase_str << "] [" << system->name()
-               << "] [" << current << "/" << total << "] Stopped";
-            boot_log("Inf", ss.str());
+            log_phase("Shutdown", phase, system->name(), current, total, "Stopped");
         } catch (const std::exception& e) {
-            std::ostringstream ss;
-            ss << "[Shutdown] [" << phase_str << "] [" << system->name()
-               << "] [" << current << "/" << total << "] FAILED: " << e.what();
-            boot_log("Err", ss.str());
+            log_phase_err("Shutdown", phase, system->name(), current, total, e.what());
         }
-
         --current;
     }
 
     std::cout << std::endl;
-    boot_log("Inf", "[Shutdown] All systems stopped");
+    log_msg("Inf", "[Shutdown] All systems stopped");
     std::cout << std::endl;
 }
 
