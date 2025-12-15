@@ -299,6 +299,31 @@ public:
         }
     }
 
+    /// Tick systems up to and including a specific phase
+    void tick_up_to_phase(int max_phase, float dt) {
+        for (auto& system : systems_) {
+            if (system->enabled() && system->phase() <= max_phase) {
+                system->tick(registry_, dt);
+            }
+        }
+    }
+
+    /// Tick only systems in a specific phase range
+    void tick_phase_range(int min_phase, int max_phase, float dt) {
+        for (auto& system : systems_) {
+            if (system->enabled() &&
+                system->phase() >= min_phase &&
+                system->phase() <= max_phase) {
+                system->tick(registry_, dt);
+            }
+        }
+    }
+
+    /// Tick only systems in a specific phase
+    void tick_phase(int phase, float dt) {
+        tick_phase_range(phase, phase, dt);
+    }
+
     /// Start all systems (with Skynet-style boot logging)
     void start();
 
