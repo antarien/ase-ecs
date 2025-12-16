@@ -52,6 +52,7 @@ void SystemRegistry::create_all_systems(World& world) {
             case SystemPhase::Core:       return CYAN;
             case SystemPhase::Terrain:    return GREEN;
             case SystemPhase::Replication:return YELLOW;
+            case SystemPhase::Input:      return CYAN;
             case SystemPhase::Agents:     return MAGENTA;
             case SystemPhase::Network:    return RED;
             case SystemPhase::Render:     return WHITE;

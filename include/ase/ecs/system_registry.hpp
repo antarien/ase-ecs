@@ -41,6 +41,7 @@ enum class SystemPhase : int {
     Services = 20,     // Service registration
     Terrain = 30,      // Terrain systems
     Replication = 40,  // Sync, Authority, Broadcast
+    Input = 45,        // Input processing (camera rotation, etc.) - before physics/agents
     Physics = 50,      // Physics simulation
     Agents = 60,       // AI, Weather, Erosion agents
     Network = 70,      // Network I/O
@@ -55,6 +56,7 @@ inline const char* phase_name(SystemPhase phase) {
         case SystemPhase::Services: return "Services";
         case SystemPhase::Terrain: return "Terrain";
         case SystemPhase::Replication: return "Replication";
+        case SystemPhase::Input: return "Input";
         case SystemPhase::Physics: return "Physics";
         case SystemPhase::Agents: return "Agents";
         case SystemPhase::Network: return "Network";
