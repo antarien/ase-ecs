@@ -25,16 +25,19 @@ static void log_msg(const char* level, const std::string& msg) {
               << "[" << color << level << "\x1b[0m] [ASE] [SERVER] " << msg << std::endl;
 }
 
+static void log_info(const std::string& msg) { log_msg("INF", msg); }
+static void log_err(const std::string& msg) { log_msg("ERR", msg); }
+
 static void log_phase(const char* stage, const char* phase, const char* name, size_t cur, size_t total, const char* status) {
     std::ostringstream ss;
     ss << "[" << stage << "] [" << phase << "] [" << cur << "/" << total << "] [" << name << "] " << status;
-    log_msg("Inf", ss.str());
+    log_info(ss.str());
 }
 
 static void log_phase_err(const char* stage, const char* phase, const char* name, size_t cur, size_t total, const char* err) {
     std::ostringstream ss;
     ss << "[" << stage << "] [" << phase << "] [" << cur << "/" << total << "] [" << name << "] FAILED: " << err;
-    log_msg("Err", ss.str());
+    log_err(ss.str());
 }
 
 void World::start() {
@@ -42,7 +45,7 @@ void World::start() {
     size_t current = 0;
 
     std::cout << std::endl;
-    log_msg("Inf", "[Booting] Starting " + std::to_string(total) + " systems...");
+    log_info("[Booting] Starting " + std::to_string(total) + " systems...");
     std::cout << std::endl;
 
     for (auto& system : systems_) {
@@ -60,7 +63,7 @@ void World::start() {
     }
 
     std::cout << std::endl;
-    log_msg("Inf", "[Booting] All " + std::to_string(total) + " systems started successfully");
+    log_info("[Booting] All " + std::to_string(total) + " systems started successfully");
     std::cout << std::endl;
 }
 
@@ -69,7 +72,7 @@ void World::stop() {
     size_t current = total;
 
     std::cout << std::endl;
-    log_msg("Inf", "[Shutdown] Stopping " + std::to_string(total) + " systems...");
+    log_info("[Shutdown] Stopping " + std::to_string(total) + " systems...");
     std::cout << std::endl;
 
     for (auto it = systems_.rbegin(); it != systems_.rend(); ++it) {
@@ -86,7 +89,7 @@ void World::stop() {
     }
 
     std::cout << std::endl;
-    log_msg("Inf", "[Shutdown] All systems stopped");
+    log_info("[Shutdown] All systems stopped");
     std::cout << std::endl;
 }
 
@@ -176,10 +179,10 @@ void World::run_startup() {
         return;  // Only run once
     }
 
-    log_msg("Inf", "[Schedule] Running Startup schedule...");
+    log_info("[Schedule] Running Startup schedule...");
     run_schedule(Schedule::Startup, 0.0f);
     startup_ran_ = true;
-    log_msg("Inf", "[Schedule] Startup schedule complete");
+    log_info("[Schedule] Startup schedule complete");
 }
 
 void World::run_shutdown() {
@@ -187,10 +190,10 @@ void World::run_shutdown() {
         return;  // Only run once
     }
 
-    log_msg("Inf", "[Schedule] Running Shutdown schedule...");
+    log_info("[Schedule] Running Shutdown schedule...");
     run_schedule(Schedule::Shutdown, 0.0f);
     shutdown_ran_ = true;
-    log_msg("Inf", "[Schedule] Shutdown schedule complete");
+    log_info("[Schedule] Shutdown schedule complete");
 }
 
 }  // namespace ase::ecs
