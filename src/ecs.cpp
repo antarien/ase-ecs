@@ -41,6 +41,21 @@ static void log_phase_err(const char* stage, const char* phase, const char* name
 }
 
 void World::start() {
+    // Initialize all schedules from ScheduleRegistry BEFORE starting
+    // This ensures systems registered via REGISTER_SYSTEM are included
+    auto active = ScheduleRegistry::get_active_schedules();
+    log_info("[DEBUG] ScheduleRegistry active schedules: " + std::to_string(active.size()));
+
+    auto all_names = ScheduleRegistry::get_all_system_names();
+    log_info("[DEBUG] ScheduleRegistry registered systems: " + std::to_string(all_names.size()));
+    for (const auto& name : all_names) {
+        log_info("[DEBUG]   - " + name);
+    }
+
+    for (auto schedule : active) {
+        initialize_schedule(schedule);
+    }
+
     const size_t total = systems_.size();
     size_t current = 0;
 

@@ -99,6 +99,79 @@ private:
 };
 
 // ============================================================================
+// Registration Helper
+// ============================================================================
+
+/**
+ * Helper class that enables fluent registration with proper timing.
+ *
+ * Created as a temporary by REGISTER_SYSTEM macro. When the temporary
+ * is destroyed (at end of the full expression), it registers the descriptor.
+ * This ensures registration happens during static initialization, AFTER
+ * all fluent method calls have been applied to the descriptor.
+ */
+class RegistrationHelper {
+    SystemDescriptor* desc_;
+
+public:
+    explicit RegistrationHelper(SystemDescriptor* desc) : desc_(desc) {}
+
+    ~RegistrationHelper() {
+        if (desc_) {
+            ScheduleRegistry::register_system(std::move(*desc_));
+        }
+    }
+
+    // Disable copy to prevent double-registration
+    RegistrationHelper(const RegistrationHelper&) = delete;
+    RegistrationHelper& operator=(const RegistrationHelper&) = delete;
+
+    // Enable move (transfers ownership)
+    RegistrationHelper(RegistrationHelper&& other) noexcept : desc_(other.desc_) {
+        other.desc_ = nullptr;
+    }
+    RegistrationHelper& operator=(RegistrationHelper&& other) noexcept {
+        desc_ = other.desc_;
+        other.desc_ = nullptr;
+        return *this;
+    }
+
+    // Fluent methods - forward to descriptor and return *this
+    RegistrationHelper& in_schedule(Schedule s) {
+        desc_->schedule = s;
+        return *this;
+    }
+
+    RegistrationHelper& with_priority(int p) {
+        desc_->priority = p;
+        return *this;
+    }
+
+    RegistrationHelper& run_after(const std::string& system_name) {
+        desc_->after.push_back(system_name);
+        return *this;
+    }
+
+    RegistrationHelper& run_before(const std::string& system_name) {
+        desc_->before.push_back(system_name);
+        return *this;
+    }
+
+    RegistrationHelper& run_if(RunCondition condition) {
+        desc_->run_conditions.push_back(std::move(condition));
+        return *this;
+    }
+
+    RegistrationHelper& in_set(const std::string& set_name) {
+        desc_->in_sets.push_back(set_name);
+        return *this;
+    }
+
+    // Conversion to int allows use in static variable initialization
+    operator int() const { return 0; }
+};
+
+// ============================================================================
 // Registration Macros
 // ============================================================================
 
@@ -106,32 +179,31 @@ private:
 // Use REGISTER_SYSTEM for new code with fluent API
 
 /**
- * New fluent macro for system registration
+ * Fluent macro for system registration
  *
  * Usage:
  *   REGISTER_SYSTEM(MySystem)
  *       .in_schedule(Schedule::FixedUpdate)
  *       .run_after("ChunkLookupSystem")
  *       .run_if(conditions::any_with_component<Dirty>());
+ *
+ * How it works:
+ *   1. Creates a static SystemDescriptor initialized with name and factory
+ *   2. Creates a temporary RegistrationHelper pointing to the descriptor
+ *   3. Fluent method calls modify the descriptor
+ *   4. When the temporary RegistrationHelper is destroyed (end of statement),
+ *      it registers the descriptor with ScheduleRegistry
+ *   5. The RegistrationHelper converts to int (0) to initialize the static bool
  */
 #define REGISTER_SYSTEM(ClassName) \
-    namespace { \
-        struct ClassName##_FluentRegister { \
-            ::ase::ecs::SystemDescriptor desc_; \
-            ClassName##_FluentRegister() { \
-                desc_.name = #ClassName; \
-                desc_.factory = []() -> std::unique_ptr<::ase::ecs::System> { \
-                    return std::make_unique<ClassName>(); \
-                }; \
-            } \
-            ~ClassName##_FluentRegister() { \
-                ::ase::ecs::ScheduleRegistry::register_system(std::move(desc_)); \
-            } \
-            ::ase::ecs::SystemDescriptor& operator()() { return desc_; } \
+    static ::ase::ecs::SystemDescriptor ClassName##_descriptor_ = []{ \
+        ::ase::ecs::SystemDescriptor d; \
+        d.name = #ClassName; \
+        d.factory = []() -> std::unique_ptr<::ase::ecs::System> { \
+            return std::make_unique<ClassName>(); \
         }; \
-        static auto ClassName##_fluent_register_ = ClassName##_FluentRegister()()
-
-// Note: The REGISTER_SYSTEM macro returns the descriptor reference,
-// allowing chained method calls. The destructor registers the system.
+        return d; \
+    }(); \
+    [[maybe_unused]] static int ClassName##_registered_ = ::ase::ecs::RegistrationHelper(&ClassName##_descriptor_)
 
 } // namespace ase::ecs
