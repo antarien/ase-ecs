@@ -22,18 +22,18 @@ static std::string timestamp() {
 static void log_msg(const char* level, const std::string& msg) {
     const char* color = (level[0] == 'E') ? "\x1b[38;5;167m" : "\x1b[38;5;71m";
     std::cout << "\x1b[38;5;242m[" << timestamp() << "]\x1b[0m "
-              << "[" << color << level << "\x1b[0m] [ASE] " << msg << std::endl;
+              << "[" << color << level << "\x1b[0m] [ASE] [SERVER] " << msg << std::endl;
 }
 
 static void log_phase(const char* stage, const char* phase, const char* name, size_t cur, size_t total, const char* status) {
     std::ostringstream ss;
-    ss << "[" << stage << "] [" << phase << "] [" << name << "] [" << cur << "/" << total << "] " << status;
+    ss << "[" << stage << "] [" << phase << "] [" << cur << "/" << total << "] [" << name << "] " << status;
     log_msg("Inf", ss.str());
 }
 
 static void log_phase_err(const char* stage, const char* phase, const char* name, size_t cur, size_t total, const char* err) {
     std::ostringstream ss;
-    ss << "[" << stage << "] [" << phase << "] [" << name << "] [" << cur << "/" << total << "] FAILED: " << err;
+    ss << "[" << stage << "] [" << phase << "] [" << cur << "/" << total << "] [" << name << "] FAILED: " << err;
     log_msg("Err", ss.str());
 }
 
