@@ -1,5 +1,6 @@
 #include <ase/ecs/ecs.hpp>
 #include <ase/ecs/system_registry.hpp>
+#include <ase/ecs/schedule_registry.hpp>
 #include <iostream>
 #include <iomanip>
 #include <chrono>
@@ -46,13 +47,14 @@ void World::start() {
 
     for (auto& system : systems_) {
         ++current;
-        const char* phase = phase_name(static_cast<SystemPhase>(system->phase()));
+        // Use schedule name for logging
+        std::string schedule_str = "System";
 
         try {
             system->on_start(registry_);
-            log_phase("Booting", phase, system->name(), current, total, "Started");
+            log_phase("Booting", schedule_str.c_str(), system->name(), current, total, "Started");
         } catch (const std::exception& e) {
-            log_phase_err("Booting", phase, system->name(), current, total, e.what());
+            log_phase_err("Booting", schedule_str.c_str(), system->name(), current, total, e.what());
             throw;
         }
     }
@@ -72,13 +74,13 @@ void World::stop() {
 
     for (auto it = systems_.rbegin(); it != systems_.rend(); ++it) {
         auto& system = *it;
-        const char* phase = phase_name(static_cast<SystemPhase>(system->phase()));
+        std::string schedule_str = "System";
 
         try {
             system->on_stop(registry_);
-            log_phase("Shutdown", phase, system->name(), current, total, "Stopped");
+            log_phase("Shutdown", schedule_str.c_str(), system->name(), current, total, "Stopped");
         } catch (const std::exception& e) {
-            log_phase_err("Shutdown", phase, system->name(), current, total, e.what());
+            log_phase_err("Shutdown", schedule_str.c_str(), system->name(), current, total, e.what());
         }
         --current;
     }
@@ -86,6 +88,109 @@ void World::stop() {
     std::cout << std::endl;
     log_msg("Inf", "[Shutdown] All systems stopped");
     std::cout << std::endl;
+}
+
+// ============================================================================
+// Schedule-Based Execution
+// ============================================================================
+
+void World::initialize_schedule(Schedule schedule) {
+    if (initialized_schedules_.count(schedule)) {
+        return;  // Already initialized
+    }
+
+    auto descriptors = ScheduleRegistry::get_systems(schedule);
+    auto& systems_for_schedule = schedule_systems_[schedule];
+
+    for (const auto* desc : descriptors) {
+        // Create the system instance
+        if (desc->factory) {
+            auto system = desc->factory();
+            System* raw_ptr = system.get();
+
+            // Add to main systems list
+            systems_.push_back(std::move(system));
+
+            // Track in schedule map
+            systems_for_schedule.push_back({raw_ptr, desc});
+        }
+    }
+
+    initialized_schedules_.insert(schedule);
+}
+
+void World::run_schedule(Schedule schedule, float dt) {
+    // Initialize if needed
+    if (!initialized_schedules_.count(schedule)) {
+        initialize_schedule(schedule);
+    }
+
+    auto it = schedule_systems_.find(schedule);
+    if (it == schedule_systems_.end()) {
+        return;  // No systems for this schedule
+    }
+
+    for (auto& [system, desc] : it->second) {
+        // Check if system is enabled
+        if (!system->enabled()) {
+            continue;
+        }
+
+        // Check all run conditions
+        bool should_run = true;
+        for (const auto& condition : desc->run_conditions) {
+            if (!condition(registry_)) {
+                should_run = false;
+                break;
+            }
+        }
+
+        if (should_run) {
+            system->tick(registry_, dt);
+        }
+    }
+}
+
+void World::run_schedule_with_hooks(Schedule schedule, float dt) {
+    run_schedule(pre_schedule(schedule), dt);
+    run_schedule(schedule, dt);
+    run_schedule(post_schedule(schedule), dt);
+}
+
+void World::run_fixed_update(float frame_dt, float fixed_dt) {
+    fixed_accumulator_ += frame_dt;
+
+    while (fixed_accumulator_ >= fixed_dt) {
+        run_schedule_with_hooks(Schedule::FixedFirst, fixed_dt);
+        run_schedule_with_hooks(Schedule::FixedPreUpdate, fixed_dt);
+        run_schedule_with_hooks(Schedule::FixedUpdate, fixed_dt);
+        run_schedule_with_hooks(Schedule::FixedPostUpdate, fixed_dt);
+        run_schedule_with_hooks(Schedule::FixedLast, fixed_dt);
+
+        fixed_accumulator_ -= fixed_dt;
+    }
+}
+
+void World::run_startup() {
+    if (startup_ran_) {
+        return;  // Only run once
+    }
+
+    log_msg("Inf", "[Schedule] Running Startup schedule...");
+    run_schedule(Schedule::Startup, 0.0f);
+    startup_ran_ = true;
+    log_msg("Inf", "[Schedule] Startup schedule complete");
+}
+
+void World::run_shutdown() {
+    if (shutdown_ran_) {
+        return;  // Only run once
+    }
+
+    log_msg("Inf", "[Schedule] Running Shutdown schedule...");
+    run_schedule(Schedule::Shutdown, 0.0f);
+    shutdown_ran_ = true;
+    log_msg("Inf", "[Schedule] Shutdown schedule complete");
 }
 
 }  // namespace ase::ecs
