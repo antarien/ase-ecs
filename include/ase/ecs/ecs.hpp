@@ -416,6 +416,27 @@ struct Created {};
 struct PendingSync {};
 
 // ============================================================================
+// Command Message (for Client→Server commands via ECS pattern)
+// ============================================================================
+
+/**
+ * Generic command message component.
+ *
+ * Server creates entity with this component from REST API.
+ * Plugin systems query for their command type and process.
+ * System destroys entity after processing.
+ *
+ * Example:
+ *   POST /api/command { "type": "sky_time", "hour": 6.0 }
+ *   → Entity with CommandMessage { type="sky_time", payload="{\"hour\":6.0}" }
+ *   → SkyTimeSystem queries for type=="sky_time", processes, destroys
+ */
+struct CommandMessage {
+    std::string type;     // Command type (e.g. "sky_time", "terrain_mutate")
+    std::string payload;  // JSON payload for plugin to parse
+};
+
+// ============================================================================
 // Entity ID Utilities
 // ============================================================================
 
