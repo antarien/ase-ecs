@@ -1,14 +1,65 @@
 #include <ase/ecs/app.hpp>
 #include <ase/log/log.hpp>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <ctime>
 #include <iostream>
 #include <thread>
 #include <unordered_map>
 #include <queue>
 #include <iomanip>
+#include <sstream>
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 namespace ase::ecs {
+
+namespace {
+
+// Get current timestamp in format [YYYY-MM-DD HH:MM:SS.mmm]
+std::string timestamp() {
+    auto now = std::chrono::system_clock::now();
+    auto time = std::chrono::system_clock::to_time_t(now);
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()) % 1000;
+
+    std::tm tm_buf{};
+    localtime_r(&time, &tm_buf);
+
+    std::ostringstream oss;
+    oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S")
+        << '.' << std::setfill('0') << std::setw(3) << ms.count();
+    return oss.str();
+}
+
+// Get terminal width (default 80 if not available)
+int get_terminal_width() {
+    struct winsize w{};
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0) {
+        return w.ws_col;
+    }
+    // Fallback to COLUMNS env var
+    if (const char* cols = std::getenv("COLUMNS")) {
+        int width = std::atoi(cols);
+        if (width > 0) return width;
+    }
+    return 80;  // Default
+}
+
+// Generate a line of ━ characters matching terminal width
+std::string terminal_line() {
+    int width = get_terminal_width();
+    std::string line;
+    line.reserve(static_cast<size_t>(width) * 3);  // ━ is 3 bytes in UTF-8
+    for (int i = 0; i < width; ++i) {
+        line += "━";
+    }
+    return line;
+}
+
+}  // anonymous namespace
 
 App::App() = default;
 
@@ -89,11 +140,12 @@ void App::print_boot_log() {
 
     // Count total systems
     size_t total_systems = system_infos_.size();
+    std::string line = terminal_line();
 
     std::cout << "\n";
-    std::cout << DIM << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" << RESET << "\n";
+    std::cout << DIM << line << RESET << "\n";
     std::cout << "  ASE Schedule Bootstrap " << DIM << "(" << total_systems << " systems)" << RESET << "\n";
-    std::cout << DIM << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" << RESET << "\n";
+    std::cout << DIM << line << RESET << "\n";
 
     // Define schedule order
     static const std::vector<Schedule> schedule_order = {
@@ -136,7 +188,14 @@ void App::print_boot_log() {
         }
         std::cout << "\n";
 
+        std::string prev_source;
         for (const auto* info : it->second) {
+            // Empty line between different modules
+            if (!prev_source.empty() && prev_source != info->source) {
+                std::cout << "  " << schedule_color(schedule) << "│" << RESET << "\n";
+            }
+            prev_source = info->source;
+
             std::cout << "  " << schedule_color(schedule) << "│" << RESET << "  ";
             std::cout << WHITE << info->name << RESET;
 
@@ -154,7 +213,7 @@ void App::print_boot_log() {
     }
 
     std::cout << "\n";
-    std::cout << DIM << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" << RESET << "\n\n";
+    std::cout << DIM << line << RESET << "\n\n";
 }
 
 void App::sort_systems_by_dependencies() {
@@ -256,7 +315,8 @@ void App::startup() {
             if (source.empty()) source = "unknown";
 
             // Boot log with std::cout (before spdlog is initialized)
-            std::cout << DIM << "[Booting]" << RESET << " "
+            std::cout << DIM << "[" << timestamp() << "]" << RESET << " "
+                      << DIM << "[Booting]" << RESET << " "
                       << CYAN << "[" << std::setw(3) << std::setfill('0') << current
                       << "/" << std::setw(3) << std::setfill('0') << total << "]" << RESET << " "
                       << GREEN << "[" << source << "]" << RESET << " "
@@ -302,7 +362,8 @@ void App::shutdown() {
             if (source.empty()) source = "unknown";
 
             // Shutdown log with std::cout
-            std::cout << DIM << "[Shutdown]" << RESET << " "
+            std::cout << DIM << "[" << timestamp() << "]" << RESET << " "
+                      << DIM << "[Shutdown]" << RESET << " "
                       << YELLOW << "[" << std::setw(3) << std::setfill('0') << current
                       << "/" << std::setw(3) << std::setfill('0') << total << "]" << RESET << " "
                       << RED << "[" << source << "]" << RESET << " "
