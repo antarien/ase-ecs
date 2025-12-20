@@ -5,7 +5,7 @@
  *
  * Usage:
  *   ecs::App()
- *       .add_module<KernelModule>()
+ *       .add_kernel<ase::kernel::Kernel>()
  *       .add_module<PlayerModule>()
  *       .add_plugin<SkyPlugin>()
  *       .run();
@@ -41,12 +41,23 @@ struct SystemInfo {
 };
 
 // =============================================================================
+// Kernel Concept (Layer 2) - Core kernel, foundation for modules/plugins
+// =============================================================================
+
+template<typename T>
+concept Kernel = requires(T kernel, App& app) {
+    { kernel.build(app) } -> std::same_as<void>;
+    { T::name() } -> std::convertible_to<const char*>;
+};
+
+// =============================================================================
 // Module Concept (Layer 3) - Core game systems, statically linked
 // =============================================================================
 
 template<typename T>
 concept Module = requires(T module, App& app) {
     { module.build(app) } -> std::same_as<void>;
+    { T::name() } -> std::convertible_to<const char*>;
 };
 
 // =============================================================================
@@ -56,6 +67,7 @@ concept Module = requires(T module, App& app) {
 template<typename T>
 concept Plugin = requires(T plugin, App& app) {
     { plugin.build(app) } -> std::same_as<void>;
+    { T::name() } -> std::convertible_to<const char*>;
 };
 
 // =============================================================================
@@ -108,6 +120,19 @@ public:
      */
     App& set_source(std::string_view source) {
         current_source_ = source;
+        return *this;
+    }
+
+    /**
+     * Add the kernel (Layer 2 - Foundation).
+     * Must be called first, before modules and plugins.
+     */
+    template<Kernel K>
+    App& add_kernel() {
+        K kernel;
+        current_source_ = K::name();
+        kernel.build(*this);
+        current_source_.clear();
         return *this;
     }
 

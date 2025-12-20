@@ -1,6 +1,7 @@
 #include <ase/ecs/app.hpp>
 #include <ase/log/log.hpp>
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <thread>
 #include <unordered_map>
@@ -58,6 +59,34 @@ void App::print_boot_log() {
         }
     };
 
+    // Schedule metrics (timing info from kernel)
+    auto schedule_metrics = [&](Schedule schedule) -> std::string {
+        switch (schedule) {
+            case Schedule::Startup:
+                return "once";
+            case Schedule::First:
+            case Schedule::PreUpdate:
+            case Schedule::Update:
+            case Schedule::PostUpdate:
+            case Schedule::Last:
+                return "every frame";
+            case Schedule::FixedFirst:
+            case Schedule::FixedPreUpdate:
+            case Schedule::FixedUpdate:
+            case Schedule::FixedPostUpdate:
+            case Schedule::FixedLast:
+                return std::to_string(static_cast<int>(std::round(1.0f / fixed_dt_))) + " Hz";
+            case Schedule::Replication:
+                return std::to_string(static_cast<int>(std::round(1.0f / replication_dt_))) + " Hz";
+            case Schedule::Persistence:
+                return std::to_string(static_cast<int>(std::round(1.0f / persistence_dt_))) + " Hz";
+            case Schedule::Shutdown:
+                return "once";
+            default:
+                return "";
+        }
+    };
+
     // Count total systems
     size_t total_systems = system_infos_.size();
 
@@ -97,9 +126,15 @@ void App::print_boot_log() {
             continue;
         }
 
+        std::string metrics = schedule_metrics(schedule);
+
         std::cout << "\n";
         std::cout << "  " << schedule_color(schedule) << "┌─ "
-                  << schedule_name(schedule) << RESET << "\n";
+                  << schedule_name(schedule) << RESET;
+        if (!metrics.empty()) {
+            std::cout << " " << DIM << "(" << metrics << ")" << RESET;
+        }
+        std::cout << "\n";
 
         for (const auto* info : it->second) {
             std::cout << "  " << schedule_color(schedule) << "│" << RESET << "  ";
