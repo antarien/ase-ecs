@@ -5,9 +5,9 @@
  *
  * Usage:
  *   ecs::App()
- *       .add_plugin<KernelPlugin>()
- *       .add_plugin<PlayerPlugin>()
- *       .add_system<MySystem>(Schedule::Update)
+ *       .add_module<KernelModule>()
+ *       .add_module<PlayerModule>()
+ *       .add_plugin<SkyPlugin>()
  *       .run();
  */
 
@@ -17,6 +17,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 #include <functional>
@@ -25,6 +26,18 @@ namespace ase::ecs {
 
 // Forward declarations
 class App;
+class SystemBuilder;
+
+// =============================================================================
+// SystemInfo - Metadata for boot log
+// =============================================================================
+
+struct SystemInfo {
+    std::string name;
+    Schedule schedule = Schedule::Update;
+    std::vector<std::string> run_after;
+    int priority = 0;
+};
 
 // =============================================================================
 // Module Concept (Layer 3) - Core game systems, statically linked
@@ -45,6 +58,30 @@ concept Plugin = requires(T plugin, App& app) {
 };
 
 // =============================================================================
+// SystemBuilder - Fluent API for system configuration
+// =============================================================================
+
+class SystemBuilder {
+public:
+    SystemBuilder(App& app, Schedule schedule, std::unique_ptr<System> system);
+
+    SystemBuilder& run_after(std::string_view name);
+    SystemBuilder& with_priority(int priority);
+    App& done();
+
+    // Auto-finalize when destroyed without calling done()
+    ~SystemBuilder();
+
+private:
+    App& app_;
+    Schedule schedule_;
+    std::unique_ptr<System> system_;
+    std::vector<std::string> after_;
+    int priority_ = 0;
+    bool finalized_ = false;
+};
+
+// =============================================================================
 // App - Bevy-Style Application Builder
 // =============================================================================
 
@@ -59,15 +96,13 @@ public:
 
     App(const App&) = delete;
     App& operator=(const App&) = delete;
-    App(App&&) = default;
-    App& operator=(App&&) = default;
 
     // =========================================================================
     // Builder API
     // =========================================================================
 
     /**
-     * Add a plugin. Plugin::build(App&) is called immediately.
+     * Add a plugin (Layer 4 - Optional features).
      */
     template<Plugin P>
     App& add_plugin() {
@@ -76,9 +111,6 @@ public:
         return *this;
     }
 
-    /**
-     * Add a plugin instance.
-     */
     template<Plugin P>
     App& add_plugin(P&& plugin) {
         plugin.build(*this);
@@ -95,9 +127,6 @@ public:
         return *this;
     }
 
-    /**
-     * Add a module instance.
-     */
     template<Module M>
     App& add_module(M&& module) {
         module.build(*this);
@@ -105,40 +134,72 @@ public:
     }
 
     /**
-     * Add a system to a schedule.
+     * Add a system to a schedule (simple version).
      */
     template<typename S>
     App& add_system(Schedule schedule) {
         auto system = std::make_unique<S>();
+        SystemInfo info{
+            .name = system->name(),
+            .schedule = schedule,
+            .run_after = {},
+            .priority = 0
+        };
+        system_infos_.push_back(std::move(info));
         schedule_systems_[schedule].push_back(std::move(system));
         return *this;
     }
 
     /**
-     * Add a system instance to a schedule.
+     * Add a system with builder for dependencies.
+     * Usage: app.add_system_with<MySystem>(Schedule::Update).run_after("OtherSystem").done();
      */
-    App& add_system(Schedule schedule, std::unique_ptr<System> system) {
-        schedule_systems_[schedule].push_back(std::move(system));
-        return *this;
+    template<typename S>
+    SystemBuilder add_system_with(Schedule schedule) {
+        auto system = std::make_unique<S>();
+        return SystemBuilder(*this, schedule, std::move(system));
     }
+
+    /**
+     * Internal: Called by SystemBuilder to finalize system addition.
+     */
+    void finalize_system(Schedule schedule, std::unique_ptr<System> system,
+                         std::vector<std::string> after, int priority);
 
     // =========================================================================
     // Lifecycle
     // =========================================================================
 
     /**
-     * Run the application (blocking main loop).
+     * Full run: startup + main loop + shutdown.
+     * Use this for simple apps without custom integration logic.
      */
     void run();
 
     /**
-     * Request application exit.
+     * Initialize systems and run Startup schedule.
+     * Call this before manual tick loop.
      */
-    void quit() { running_.store(false); }
+    void startup();
 
     /**
-     * Check if running.
+     * Run one frame of the main loop schedules.
+     * Call this in your manual tick loop.
      */
+    void tick(float dt);
+
+    /**
+     * Run Shutdown schedule.
+     * Call this after manual tick loop ends.
+     */
+    void shutdown();
+
+    /**
+     * Run a specific schedule manually.
+     */
+    void run_schedule(Schedule schedule, float dt);
+
+    void quit() { running_.store(false); }
     bool is_running() const { return running_.load(); }
 
     // =========================================================================
@@ -147,22 +208,20 @@ public:
 
     World& world() { return world_; }
     const World& world() const { return world_; }
-
     Registry& registry() { return world_.registry(); }
     const Registry& registry() const { return world_.registry(); }
 
 private:
-    void run_schedule(Schedule schedule, float dt);
+    void print_boot_log();
+    void sort_systems_by_dependencies();
 
     World world_;
     std::unordered_map<Schedule, std::vector<std::unique_ptr<System>>> schedule_systems_;
+    std::vector<SystemInfo> system_infos_;
 
-    // Timestep accumulators
     float fixed_accumulator_ = 0.0f;
     float replication_accumulator_ = 0.0f;
     float persistence_accumulator_ = 0.0f;
-
-    // Rates (can be configured via components)
     float fixed_dt_ = 1.0f / 30.0f;
     float replication_dt_ = 1.0f / 20.0f;
     float persistence_dt_ = 1.0f;
@@ -171,5 +230,36 @@ private:
     std::atomic<bool> running_{false};
     TimePoint last_frame_time_;
 };
+
+// =============================================================================
+// SystemBuilder Implementation (inline)
+// =============================================================================
+
+inline SystemBuilder::SystemBuilder(App& app, Schedule schedule, std::unique_ptr<System> system)
+    : app_(app), schedule_(schedule), system_(std::move(system)) {}
+
+inline SystemBuilder& SystemBuilder::run_after(std::string_view name) {
+    after_.emplace_back(name);
+    return *this;
+}
+
+inline SystemBuilder& SystemBuilder::with_priority(int priority) {
+    priority_ = priority;
+    return *this;
+}
+
+inline App& SystemBuilder::done() {
+    if (!finalized_) {
+        app_.finalize_system(schedule_, std::move(system_), std::move(after_), priority_);
+        finalized_ = true;
+    }
+    return app_;
+}
+
+inline SystemBuilder::~SystemBuilder() {
+    if (!finalized_ && system_) {
+        app_.finalize_system(schedule_, std::move(system_), std::move(after_), priority_);
+    }
+}
 
 }  // namespace ase::ecs

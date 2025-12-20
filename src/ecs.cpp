@@ -1,6 +1,5 @@
 #include <ase/ecs/ecs.hpp>
 #include <ase/ecs/system_registry.hpp>
-#include <ase/ecs/schedule_registry.hpp>
 #include <iostream>
 #include <iomanip>
 #include <chrono>
