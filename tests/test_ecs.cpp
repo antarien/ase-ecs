@@ -45,7 +45,7 @@ void test_entity_creation() {
     World world;
 
     auto e1 = world.create();
-    auto e2 = world.create();
+    [[maybe_unused]] auto e2 = world.create();
 
     assert(world.valid(e1));
     assert(world.valid(e2));
@@ -75,16 +75,16 @@ void test_components() {
     assert(!world.has<Velocity>(entity));
 
     // Get components
-    auto& pos = world.get<Position>(entity);
+    [[maybe_unused]] auto& pos = world.get<Position>(entity);
     assert(pos.x == 1.0f);
     assert(pos.y == 2.0f);
     assert(pos.z == 3.0f);
 
-    auto& name = world.get<Name>(entity);
+    [[maybe_unused]] auto& name = world.get<Name>(entity);
     assert(name.value == "Player1");
 
     // Try get
-    auto* vel = world.try_get<Velocity>(entity);
+    [[maybe_unused]] auto* vel = world.try_get<Velocity>(entity);
     assert(vel == nullptr);
 
     // Remove component
@@ -142,10 +142,7 @@ void test_systems() {
     world.emplace<Position>(entity, 0.0f, 0.0f, 0.0f);
     world.emplace<Velocity>(entity, 10.0f, 0.0f, 0.0f);
 
-    // Start systems
-    world.start();
-
-    // Tick
+    // Tick (systems are ticked automatically)
     world.tick(0.1f);
 
     // Check position changed
@@ -157,9 +154,6 @@ void test_systems() {
     // Tick again
     world.tick(0.1f);
     assert(std::abs(pos.x - 2.0f) < 0.001f);
-
-    // Stop systems
-    world.stop();
 
     std::cout << "  PASSED" << std::endl;
 }

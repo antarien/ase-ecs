@@ -24,12 +24,10 @@
 #include <cstdint>
 #include <string>
 #include <functional>
-#include <chrono>
 #include <type_traits>
-#include <unordered_map>
-#include <unordered_set>
-
-#include "schedule.hpp"
+#include <algorithm>
+#include <memory>
+#include <vector>
 
 namespace ase::ecs {
 
@@ -68,7 +66,8 @@ using View = entt::view<entt::get_t<Components...>>;
  * Systems contain logic that operates on entities with specific components.
  * Override tick() to implement system behavior.
  *
- * Systems are auto-registered via AUTO_REGISTER_SYSTEM macro.
+ * Systems are registered via the App builder:
+ *   app.add_system<MySystem>(Schedule::FixedUpdate);
  */
 class System {
 public:
@@ -325,44 +324,6 @@ public:
         tick_phase_range(phase, phase, dt);
     }
 
-    // ========================================================================
-    // Schedule-Based Execution (Bevy-inspired)
-    // ========================================================================
-
-    /**
-     * Run all systems in a specific schedule.
-     * Respects run conditions and ordering.
-     */
-    void run_schedule(Schedule schedule, float dt = 0.0f);
-
-    /**
-     * Run a schedule with its Pre/Post variants.
-     * Executes: PreX -> X -> PostX
-     */
-    void run_schedule_with_hooks(Schedule schedule, float dt = 0.0f);
-
-    /**
-     * Run all FixedUpdate schedules with accumulator logic.
-     * Call this once per frame with frame_dt.
-     */
-    void run_fixed_update(float frame_dt, float fixed_dt = 1.0f / 30.0f);
-
-    /**
-     * Run the Startup schedule (once at initialization)
-     */
-    void run_startup();
-
-    /**
-     * Run the Shutdown schedule (once at exit, reverse order)
-     */
-    void run_shutdown();
-
-    /// Start all systems (with Skynet-style boot logging)
-    void start();
-
-    /// Stop all systems (with Skynet-style shutdown logging)
-    void stop();
-
     /// Get system count
     [[nodiscard]] size_t system_count() const { return systems_.size(); }
 
@@ -385,18 +346,8 @@ private:
             });
     }
 
-    /// Initialize systems for a schedule from ScheduleRegistry
-    void initialize_schedule(Schedule schedule);
-
     Registry registry_;
     std::vector<std::unique_ptr<System>> systems_;
-
-    // Schedule-based system management
-    std::unordered_map<Schedule, std::vector<std::pair<System*, const struct SystemDescriptor*>>> schedule_systems_;
-    std::unordered_set<Schedule> initialized_schedules_;
-    float fixed_accumulator_ = 0.0f;
-    bool startup_ran_ = false;
-    bool shutdown_ran_ = false;
 };
 
 // ============================================================================
