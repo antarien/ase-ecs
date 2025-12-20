@@ -11,6 +11,7 @@ add_library(ase-ecs STATIC
     src/system_registry.cpp
     src/schedule_registry.cpp
     src/ecs.cpp
+    src/app.cpp
 )
 add_library(ase::ecs ALIAS ase-ecs)
 

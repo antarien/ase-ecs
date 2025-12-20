@@ -451,3 +451,6 @@ struct CommandMessage {
 }
 
 }  // namespace ase::ecs
+
+// Include App after World is defined
+#include "app.hpp"
