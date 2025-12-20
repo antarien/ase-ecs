@@ -314,15 +314,16 @@ void App::startup() {
             std::string source = info ? info->source : "";
             if (source.empty()) source = "unknown";
 
-            // Boot log with std::cout (before spdlog is initialized)
+            // Call on_start first, then log (so system logs don't interleave)
+            system->on_start(world_.registry());
+
+            // Boot log with std::cout
             std::cout << DIM << "[" << timestamp() << "]" << RESET << " "
                       << DIM << "[Booting]" << RESET << " "
                       << CYAN << "[" << std::setw(3) << std::setfill('0') << current
                       << "/" << std::setw(3) << std::setfill('0') << total << "]" << RESET << " "
                       << GREEN << "[" << source << "]" << RESET << " "
                       << "[" << system->name() << "] Started\n";
-
-            system->on_start(world_.registry());
         }
     }
 
@@ -361,6 +362,9 @@ void App::shutdown() {
             std::string source = info ? info->source : "";
             if (source.empty()) source = "unknown";
 
+            // Call on_stop first, then log (so system logs don't interleave)
+            (*it)->on_stop(world_.registry());
+
             // Shutdown log with std::cout
             std::cout << DIM << "[" << timestamp() << "]" << RESET << " "
                       << DIM << "[Shutdown]" << RESET << " "
@@ -368,8 +372,6 @@ void App::shutdown() {
                       << "/" << std::setw(3) << std::setfill('0') << total << "]" << RESET << " "
                       << RED << "[" << source << "]" << RESET << " "
                       << "[" << (*it)->name() << "] Stopped\n";
-
-            (*it)->on_stop(world_.registry());
         }
     }
 
