@@ -23,8 +23,8 @@ target_include_directories(ase-ecs
 
 target_compile_features(ase-ecs PUBLIC cxx_std_20)
 
-# Link EnTT
-target_link_libraries(ase-ecs PUBLIC EnTT::EnTT)
+# Link EnTT and ase-log
+target_link_libraries(ase-ecs PUBLIC EnTT::EnTT ase::log)
 
 # Tests
 if(ASE_BUILD_TESTS)

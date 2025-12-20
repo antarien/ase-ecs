@@ -1,18 +1,22 @@
 #include <ase/ecs/app.hpp>
+#include <ase/log/log.hpp>
 #include <algorithm>
 #include <iostream>
 #include <thread>
 #include <unordered_map>
 #include <queue>
+#include <iomanip>
 
 namespace ase::ecs {
 
 App::App() = default;
 
 void App::finalize_system(Schedule schedule, std::unique_ptr<System> system,
-                          std::vector<std::string> after, int priority) {
+                          std::vector<std::string> after, int priority,
+                          std::string source) {
     SystemInfo info{
         .name = system->name(),
+        .source = source.empty() ? current_source_ : std::move(source),
         .schedule = schedule,
         .run_after = std::move(after),
         .priority = priority
@@ -192,9 +196,37 @@ void App::startup() {
     // Print boot log
     print_boot_log();
 
+    // Build name -> info mapping for source lookup
+    std::unordered_map<std::string, const SystemInfo*> info_map;
+    for (const auto& info : system_infos_) {
+        info_map[info.name] = &info;
+    }
+
+    // Count total systems
+    size_t total = system_infos_.size();
+    size_t current = 0;
+
+    // ANSI colors for boot log
+    constexpr const char* RESET = "\x1b[0m";
+    constexpr const char* DIM = "\x1b[38;5;243m";
+    constexpr const char* GREEN = "\x1b[38;5;71m";
+    constexpr const char* CYAN = "\x1b[36m";
+
     // Call on_start() for ALL systems (initialization)
     for (auto& [schedule, systems] : schedule_systems_) {
         for (auto& system : systems) {
+            ++current;
+            const auto* info = info_map[system->name()];
+            std::string source = info ? info->source : "";
+            if (source.empty()) source = "unknown";
+
+            // Boot log with std::cout (before spdlog is initialized)
+            std::cout << DIM << "[Booting]" << RESET << " "
+                      << CYAN << "[" << std::setw(3) << std::setfill('0') << current
+                      << "/" << std::setw(3) << std::setfill('0') << total << "]" << RESET << " "
+                      << GREEN << "[" << source << "]" << RESET << " "
+                      << "[" << system->name() << "] Started\n";
+
             system->on_start(world_.registry());
         }
     }
@@ -210,9 +242,37 @@ void App::shutdown() {
     // Run Shutdown schedule
     run_schedule(Schedule::Shutdown, 0.0f);
 
+    // Build name -> info mapping for source lookup
+    std::unordered_map<std::string, const SystemInfo*> info_map;
+    for (const auto& info : system_infos_) {
+        info_map[info.name] = &info;
+    }
+
+    // Count total systems
+    size_t total = system_infos_.size();
+    size_t current = 0;
+
+    // ANSI colors for shutdown log
+    constexpr const char* RESET = "\x1b[0m";
+    constexpr const char* DIM = "\x1b[38;5;243m";
+    constexpr const char* YELLOW = "\x1b[33m";
+    constexpr const char* RED = "\x1b[38;5;167m";
+
     // Call on_stop() for ALL systems (cleanup) in reverse order
     for (auto& [schedule, systems] : schedule_systems_) {
         for (auto it = systems.rbegin(); it != systems.rend(); ++it) {
+            ++current;
+            const auto* info = info_map[(*it)->name()];
+            std::string source = info ? info->source : "";
+            if (source.empty()) source = "unknown";
+
+            // Shutdown log with std::cout
+            std::cout << DIM << "[Shutdown]" << RESET << " "
+                      << YELLOW << "[" << std::setw(3) << std::setfill('0') << current
+                      << "/" << std::setw(3) << std::setfill('0') << total << "]" << RESET << " "
+                      << RED << "[" << source << "]" << RESET << " "
+                      << "[" << (*it)->name() << "] Stopped\n";
+
             (*it)->on_stop(world_.registry());
         }
     }

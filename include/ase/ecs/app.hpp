@@ -34,6 +34,7 @@ class SystemBuilder;
 
 struct SystemInfo {
     std::string name;
+    std::string source;  // Module/Plugin name (e.g., "ase-network", "ase-pl-sky")
     Schedule schedule = Schedule::Update;
     std::vector<std::string> run_after;
     int priority = 0;
@@ -77,6 +78,7 @@ private:
     Schedule schedule_;
     std::unique_ptr<System> system_;
     std::vector<std::string> after_;
+    std::string source_;
     int priority_ = 0;
     bool finalized_ = false;
 };
@@ -102,18 +104,30 @@ public:
     // =========================================================================
 
     /**
+     * Set current source for system registration logging.
+     */
+    App& set_source(std::string_view source) {
+        current_source_ = source;
+        return *this;
+    }
+
+    /**
      * Add a plugin (Layer 4 - Optional features).
      */
     template<Plugin P>
     App& add_plugin() {
         P plugin;
+        current_source_ = P::name();
         plugin.build(*this);
+        current_source_.clear();
         return *this;
     }
 
     template<Plugin P>
     App& add_plugin(P&& plugin) {
+        current_source_ = P::name();
         plugin.build(*this);
+        current_source_.clear();
         return *this;
     }
 
@@ -123,13 +137,17 @@ public:
     template<Module M>
     App& add_module() {
         M module;
+        current_source_ = M::name();
         module.build(*this);
+        current_source_.clear();
         return *this;
     }
 
     template<Module M>
     App& add_module(M&& module) {
+        current_source_ = M::name();
         module.build(*this);
+        current_source_.clear();
         return *this;
     }
 
@@ -141,6 +159,7 @@ public:
         auto system = std::make_unique<S>();
         SystemInfo info{
             .name = system->name(),
+            .source = current_source_,
             .schedule = schedule,
             .run_after = {},
             .priority = 0
@@ -164,7 +183,10 @@ public:
      * Internal: Called by SystemBuilder to finalize system addition.
      */
     void finalize_system(Schedule schedule, std::unique_ptr<System> system,
-                         std::vector<std::string> after, int priority);
+                         std::vector<std::string> after, int priority,
+                         std::string source = {});
+
+    const std::string& current_source() const { return current_source_; }
 
     // =========================================================================
     // Lifecycle
@@ -229,6 +251,7 @@ private:
 
     std::atomic<bool> running_{false};
     TimePoint last_frame_time_;
+    std::string current_source_;
 };
 
 // =============================================================================
@@ -236,7 +259,7 @@ private:
 // =============================================================================
 
 inline SystemBuilder::SystemBuilder(App& app, Schedule schedule, std::unique_ptr<System> system)
-    : app_(app), schedule_(schedule), system_(std::move(system)) {}
+    : app_(app), schedule_(schedule), system_(std::move(system)), source_(app.current_source()) {}
 
 inline SystemBuilder& SystemBuilder::run_after(std::string_view name) {
     after_.emplace_back(name);
@@ -250,7 +273,7 @@ inline SystemBuilder& SystemBuilder::with_priority(int priority) {
 
 inline App& SystemBuilder::done() {
     if (!finalized_) {
-        app_.finalize_system(schedule_, std::move(system_), std::move(after_), priority_);
+        app_.finalize_system(schedule_, std::move(system_), std::move(after_), priority_, std::move(source_));
         finalized_ = true;
     }
     return app_;
@@ -258,7 +281,7 @@ inline App& SystemBuilder::done() {
 
 inline SystemBuilder::~SystemBuilder() {
     if (!finalized_ && system_) {
-        app_.finalize_system(schedule_, std::move(system_), std::move(after_), priority_);
+        app_.finalize_system(schedule_, std::move(system_), std::move(after_), priority_, std::move(source_));
     }
 }
 
