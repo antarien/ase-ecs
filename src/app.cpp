@@ -188,11 +188,22 @@ void App::print_boot_log() {
         }
         std::cout << "\n";
 
+        // Count systems per module in this schedule
+        std::unordered_map<std::string, size_t> module_counts;
+        for (const auto* info_ptr : it->second) {
+            module_counts[info_ptr->source]++;
+        }
+
         std::string prev_source;
+        size_t prev_module_count = 0;
         for (const auto* info : it->second) {
-            // Empty line between different modules
-            if (!prev_source.empty() && prev_source != info->source) {
+            // Empty line between module groups, but only if previous had >1 system
+            if (!prev_source.empty() && prev_source != info->source && prev_module_count > 1) {
                 std::cout << "  " << schedule_color(schedule) << "│" << RESET << "\n";
+            }
+
+            if (prev_source != info->source) {
+                prev_module_count = module_counts[info->source];
             }
             prev_source = info->source;
 
