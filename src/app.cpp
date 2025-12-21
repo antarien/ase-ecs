@@ -197,9 +197,12 @@ void App::print_boot_log() {
         std::string prev_source;
         size_t prev_module_count = 0;
         for (const auto* info : it->second) {
-            // Empty line between module groups, but only if previous had >1 system
-            if (!prev_source.empty() && prev_source != info->source && prev_module_count > 1) {
-                std::cout << "  " << schedule_color(schedule) << "│" << RESET << "\n";
+            // Empty line between module groups if either previous or current has >1 system
+            if (!prev_source.empty() && prev_source != info->source) {
+                size_t curr_module_count = module_counts[info->source];
+                if (prev_module_count > 1 || curr_module_count > 1) {
+                    std::cout << "  " << schedule_color(schedule) << "│" << RESET << "\n";
+                }
             }
 
             if (prev_source != info->source) {
