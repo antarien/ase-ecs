@@ -307,7 +307,7 @@ void App::print_boot_log() {
             }
 
             // Print [ .. ] line before on_start
-            std::cout << line_content.str() << YELLOW << "[ .. ]" << RESET << " " << line_suffix.str() << std::flush;
+            std::cout << line_content.str() << YELLOW << "[..]" << RESET << " " << line_suffix.str() << std::flush;
 
             // Call on_start (logs go to queue after LogSystem starts)
             auto* system = name_to_system[info->name];
@@ -323,8 +323,8 @@ void App::print_boot_log() {
                 }
             }
 
-            // Overwrite with [OK] using \r
-            std::cout << "\r" << line_content.str() << OK_GREEN << "[OK]" << RESET << " " << line_suffix.str() << "\n" << std::flush;
+            // Overwrite with [OK] using \r, then \x1b[K to clear remaining chars
+            std::cout << "\r\x1b[K" << line_content.str() << OK_GREEN << "[OK]" << RESET << " " << line_suffix.str() << "\n" << std::flush;
         }
     }
 
@@ -530,13 +530,13 @@ void App::shutdown() {
             line_suffix << WHITE << (*it)->name() << RESET;
 
             // Print [ .. ] line before on_stop
-            std::cout << line_content.str() << YELLOW << "[ .. ]" << RESET << " " << line_suffix.str() << std::flush;
+            std::cout << line_content.str() << YELLOW << "[..]" << RESET << " " << line_suffix.str() << std::flush;
 
             // Call on_stop
             (*it)->on_stop(world_.registry());
 
-            // Overwrite with [OK] using \r
-            std::cout << "\r" << line_content.str() << OK_GREEN << "[OK]" << RESET << " " << line_suffix.str() << "\n" << std::flush;
+            // Overwrite with [OK] using \r, then \x1b[K to clear remaining chars
+            std::cout << "\r\x1b[K" << line_content.str() << OK_GREEN << "[OK]" << RESET << " " << line_suffix.str() << "\n" << std::flush;
         }
     }
 
