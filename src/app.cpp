@@ -516,11 +516,13 @@ void App::shutdown() {
             int module_color = log::get_module_color_code(source);
 
             // Build the line content (without status) for reuse
+            // Count DOWN from total to 1 (shutdown is reverse order)
+            size_t remaining = total - current + 1;
             std::ostringstream line_content;
             line_content << "  " << BLUE << "│" << RESET << " "
                          << DIM << "[" << short_timestamp() << "]" << RESET << " "
                          << DIM << "[Down]" << RESET << " "
-                         << CYAN << "[" << std::setfill('0') << std::setw(3) << current
+                         << CYAN << "[" << std::setfill('0') << std::setw(3) << remaining
                          << "/" << std::setfill('0') << std::setw(3) << total << "]" << RESET << " "
                          << "\x1b[38;5;" << module_color << "m[" << source << "]" << RESET << " ";
 
@@ -541,19 +543,45 @@ void App::shutdown() {
     std::cout << "\n" << std::flush;
     std::cout << DIM << line << RESET << "\n\n" << std::flush;
 
-    // Restore original sinks
-    if (sinks_replaced && log::LogSystem::logger()) {
-        log::LogSystem::logger()->sinks().clear();
-        for (auto& sink : original_sinks) {
-            log::LogSystem::logger()->sinks().push_back(sink);
-        }
-    }
+    // Replay queued logs - LogSystem is stopped, so print directly to stdout
+    // Using same format as log_system.cpp: [timestamp] [LEVEL] [ASE] [SERVER] message
+    if (!queue_sink->entries().empty()) {
+        // Level colors (same as log_system.cpp)
+        static const char* level_colors[] = {
+            "\x1b[38;5;243m", // trace - dark gray
+            "\x1b[38;5;67m",  // debug - muted blue
+            "\x1b[38;5;71m",  // info - muted green
+            "\x1b[38;5;179m", // warn - muted yellow
+            "\x1b[38;5;167m", // error - muted red
+            "\x1b[38;5;168m", // critical - muted magenta
+        };
+        static const char* level_names[] = {"TRC", "DBG", "INF", "WRN", "ERR", "CRT"};
 
-    // Replay queued logs through original logger (preserves formatting)
-    if (log::LogSystem::logger()) {
+        // Full timestamp for detail logs
+        auto full_timestamp = []() -> std::string {
+            auto now = std::chrono::system_clock::now();
+            auto time = std::chrono::system_clock::to_time_t(now);
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now.time_since_epoch()) % 1000;
+
+            std::tm tm_buf{};
+            localtime_r(&time, &tm_buf);
+
+            std::ostringstream oss;
+            oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S")
+                << '.' << std::setfill('0') << std::setw(3) << ms.count();
+            return oss.str();
+        };
+
         for (const auto& entry : queue_sink->entries()) {
-            log::LogSystem::logger()->log(entry.level, "{}", entry.payload);
+            auto idx = static_cast<size_t>(entry.level);
+            if (idx >= 6) idx = 5;  // Clamp to valid range
+
+            std::cout << DIM << "[" << full_timestamp() << "]" << RESET << " "
+                      << "[" << level_colors[idx] << level_names[idx] << RESET << "] "
+                      << "[ASE] [SERVER] " << entry.payload << "\n";
         }
+        std::cout << std::flush;
     }
 
     running_.store(false);
