@@ -432,6 +432,35 @@ void App::shutdown() {
     // Run Shutdown schedule
     run_schedule(Schedule::Shutdown, 0.0f);
 
+    // ANSI colors (same as boot)
+    constexpr const char* RESET = "\x1b[0m";
+    constexpr const char* DIM = "\x1b[38;5;243m";
+    constexpr const char* CYAN = "\x1b[36m";
+    constexpr const char* BLUE = "\x1b[34m";
+    constexpr const char* YELLOW = "\x1b[33m";
+    constexpr const char* WHITE = "\x1b[37m";
+    constexpr const char* OK_GREEN = "\x1b[38;5;71m";  // Same muted green as [INF] in logs
+
+    // Shutdown delay for visual effect (microseconds) - same as boot
+    constexpr int SHUTDOWN_DELAY_US = 15000;  // 15ms per system
+
+    // Short timestamp: MM:SS.mmm (same as boot)
+    auto short_timestamp = []() -> std::string {
+        auto now = std::chrono::system_clock::now();
+        auto time = std::chrono::system_clock::to_time_t(now);
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()) % 1000;
+
+        std::tm tm_buf{};
+        localtime_r(&time, &tm_buf);
+
+        std::ostringstream oss;
+        oss << std::setfill('0') << std::setw(2) << tm_buf.tm_min << ":"
+            << std::setfill('0') << std::setw(2) << tm_buf.tm_sec << "."
+            << std::setfill('0') << std::setw(3) << ms.count();
+        return oss.str();
+    };
+
     // Build name -> info mapping for source lookup
     std::unordered_map<std::string, const SystemInfo*> info_map;
     for (const auto& info : system_infos_) {
@@ -442,13 +471,31 @@ void App::shutdown() {
     size_t total = system_infos_.size();
     size_t current = 0;
 
-    // ANSI colors for shutdown log
-    constexpr const char* RESET = "\x1b[0m";
-    constexpr const char* DIM = "\x1b[38;5;243m";
-    constexpr const char* YELLOW = "\x1b[33m";
-    constexpr const char* RED = "\x1b[38;5;167m";
+    // Create queue sink to capture logs during shutdown
+    auto queue_sink = std::make_shared<QueueSinkMt>();
+
+    // Store original sinks and replace with queue sink
+    std::vector<spdlog::sink_ptr> original_sinks;
+    bool sinks_replaced = false;
+    if (log::LogSystem::logger()) {
+        original_sinks = log::LogSystem::logger()->sinks();
+        log::LogSystem::logger()->sinks().clear();
+        log::LogSystem::logger()->sinks().push_back(queue_sink);
+        sinks_replaced = true;
+    }
+
+    std::string line = terminal_line();
+
+    std::cout << "\n" << std::flush;
+    std::cout << DIM << line << RESET << "\n" << std::flush;
+    std::cout << "  ASE Shutdown Sequence " << DIM << "(" << total << " systems)" << RESET << "\n" << std::flush;
+    std::cout << DIM << line << RESET << "\n" << std::flush;
+
+    std::cout << "\n" << std::flush;
+    std::cout << "  " << BLUE << "┌─ Shutdown" << RESET << " " << DIM << "(once)" << RESET << "\n" << std::flush;
 
     // Call on_stop() for ALL systems (cleanup) in reverse order
+    std::string prev_source;
     for (auto& [schedule, systems] : schedule_systems_) {
         for (auto it = systems.rbegin(); it != systems.rend(); ++it) {
             ++current;
@@ -456,16 +503,56 @@ void App::shutdown() {
             std::string source = info ? info->source : "";
             if (source.empty()) source = "unknown";
 
-            // Call on_stop first, then log (so system logs don't interleave)
+            // Empty line between module groups
+            if (!prev_source.empty() && prev_source != source) {
+                std::cout << "  " << BLUE << "│" << RESET << "\n" << std::flush;
+            }
+            prev_source = source;
+
+            // Shutdown delay for visual effect
+            std::this_thread::sleep_for(std::chrono::microseconds(SHUTDOWN_DELAY_US));
+
+            // Get module color from SSOT catalog
+            int module_color = log::get_module_color_code(source);
+
+            // Build the line content (without status) for reuse
+            std::ostringstream line_content;
+            line_content << "  " << BLUE << "│" << RESET << " "
+                         << DIM << "[" << short_timestamp() << "]" << RESET << " "
+                         << DIM << "[Down]" << RESET << " "
+                         << CYAN << "[" << std::setfill('0') << std::setw(3) << current
+                         << "/" << std::setfill('0') << std::setw(3) << total << "]" << RESET << " "
+                         << "\x1b[38;5;" << module_color << "m[" << source << "]" << RESET << " ";
+
+            std::ostringstream line_suffix;
+            line_suffix << WHITE << (*it)->name() << RESET;
+
+            // Print [ .. ] line before on_stop
+            std::cout << line_content.str() << YELLOW << "[ .. ]" << RESET << " " << line_suffix.str() << std::flush;
+
+            // Call on_stop
             (*it)->on_stop(world_.registry());
 
-            // Shutdown log with std::cout
-            std::cout << DIM << "[" << timestamp() << "]" << RESET << " "
-                      << DIM << "[Shutdown]" << RESET << " "
-                      << YELLOW << "[" << std::setw(3) << std::setfill('0') << current
-                      << "/" << std::setw(3) << std::setfill('0') << total << "]" << RESET << " "
-                      << RED << "[" << source << "]" << RESET << " "
-                      << "[" << (*it)->name() << "] Stopped\n";
+            // Overwrite with [OK] using \r
+            std::cout << "\r" << line_content.str() << OK_GREEN << "[OK]" << RESET << " " << line_suffix.str() << "\n" << std::flush;
+        }
+    }
+
+    std::cout << "\n" << std::flush;
+    std::cout << DIM << line << RESET << "\n\n" << std::flush;
+
+    // Restore original sinks
+    if (sinks_replaced && log::LogSystem::logger()) {
+        log::LogSystem::logger()->sinks().clear();
+        for (auto& sink : original_sinks) {
+            log::LogSystem::logger()->sinks().push_back(sink);
+        }
+    }
+
+    // Replay queued logs through original logger (preserves formatting)
+    if (log::LogSystem::logger()) {
+        for (const auto& entry : queue_sink->entries()) {
+            log::LogSystem::logger()->log(entry.level, "{}", entry.payload);
         }
     }
 
