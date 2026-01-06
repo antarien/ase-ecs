@@ -1,5 +1,8 @@
 #include <ase/ecs/app.hpp>
 #include <ase/log/log.hpp>
+#include <ase/log/colors.hpp>
+#include <spdlog/sinks/base_sink.h>
+#include <spdlog/pattern_formatter.h>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -11,12 +14,40 @@
 #include <queue>
 #include <iomanip>
 #include <sstream>
+#include <mutex>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
 namespace ase::ecs {
 
 namespace {
+
+// Queue sink that captures log messages during boot (stores raw payload for replay)
+template<typename Mutex>
+class QueueSink : public spdlog::sinks::base_sink<Mutex> {
+public:
+    struct LogEntry {
+        spdlog::level::level_enum level;
+        std::string payload;  // Raw message text
+    };
+
+    std::vector<LogEntry>& entries() { return entries_; }
+    void clear() { entries_.clear(); }
+
+protected:
+    void sink_it_(const spdlog::details::log_msg& msg) override {
+        // Store raw payload for replay through original logger
+        entries_.push_back({msg.level, std::string(msg.payload.data(), msg.payload.size())});
+    }
+
+    void flush_() override {}
+
+private:
+    std::vector<LogEntry> entries_;
+};
+
+using QueueSinkMt = QueueSink<std::mutex>;
+
 
 // Get current timestamp in format [YYYY-MM-DD HH:MM:SS.mmm]
 std::string timestamp() {
@@ -88,6 +119,10 @@ void App::print_boot_log() {
     constexpr const char* BLUE = "\x1b[34m";
     constexpr const char* RED = "\x1b[31m";
     constexpr const char* WHITE = "\x1b[37m";
+    constexpr const char* OK_GREEN = "\x1b[38;5;71m";  // Same muted green as [INF] in logs
+
+    // Boot delay for visual effect (microseconds)
+    constexpr int BOOT_DELAY_US = 15000;  // 15ms per system
 
     // Schedule colors
     auto schedule_color = [&](Schedule schedule) -> const char* {
@@ -138,14 +173,47 @@ void App::print_boot_log() {
         }
     };
 
+    // Short timestamp: MM:SS.mmm
+    auto short_timestamp = []() -> std::string {
+        auto now = std::chrono::system_clock::now();
+        auto time = std::chrono::system_clock::to_time_t(now);
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()) % 1000;
+
+        std::tm tm_buf{};
+        localtime_r(&time, &tm_buf);
+
+        std::ostringstream oss;
+        oss << std::setfill('0') << std::setw(2) << tm_buf.tm_min << ":"
+            << std::setfill('0') << std::setw(2) << tm_buf.tm_sec << "."
+            << std::setfill('0') << std::setw(3) << ms.count();
+        return oss.str();
+    };
+
     // Count total systems
     size_t total_systems = system_infos_.size();
+    size_t current_system = 0;
     std::string line = terminal_line();
 
-    std::cout << "\n";
-    std::cout << DIM << line << RESET << "\n";
-    std::cout << "  ASE Schedule Bootstrap " << DIM << "(" << total_systems << " systems)" << RESET << "\n";
-    std::cout << DIM << line << RESET << "\n";
+    // Build name -> system mapping for on_start calls
+    std::unordered_map<std::string, System*> name_to_system;
+    for (auto& [schedule, systems] : schedule_systems_) {
+        for (auto& system : systems) {
+            name_to_system[system->name()] = system.get();
+        }
+    }
+
+    // Create queue sink to capture logs during boot (stores raw payload)
+    auto queue_sink = std::make_shared<QueueSinkMt>();
+
+    // Store original sinks (will be filled after LogSystem starts)
+    std::vector<spdlog::sink_ptr> original_sinks;
+    bool sinks_replaced = false;
+
+    std::cout << "\n" << std::flush;
+    std::cout << DIM << line << RESET << "\n" << std::flush;
+    std::cout << "  ASE Schedule Bootstrap " << DIM << "(" << total_systems << " systems)" << RESET << "\n" << std::flush;
+    std::cout << DIM << line << RESET << "\n" << std::flush;
 
     // Define schedule order
     static const std::vector<Schedule> schedule_order = {
@@ -180,13 +248,13 @@ void App::print_boot_log() {
 
         std::string metrics = schedule_metrics(schedule);
 
-        std::cout << "\n";
+        std::cout << "\n" << std::flush;
         std::cout << "  " << schedule_color(schedule) << "┌─ "
                   << schedule_name(schedule) << RESET;
         if (!metrics.empty()) {
             std::cout << " " << DIM << "(" << metrics << ")" << RESET;
         }
-        std::cout << "\n";
+        std::cout << "\n" << std::flush;
 
         // Count systems per module in this schedule
         std::unordered_map<std::string, size_t> module_counts;
@@ -201,7 +269,7 @@ void App::print_boot_log() {
             if (!prev_source.empty() && prev_source != info->source) {
                 size_t curr_module_count = module_counts[info->source];
                 if (prev_module_count > 1 || curr_module_count > 1) {
-                    std::cout << "  " << schedule_color(schedule) << "│" << RESET << "\n";
+                    std::cout << "  " << schedule_color(schedule) << "│" << RESET << "\n" << std::flush;
                 }
             }
 
@@ -210,24 +278,73 @@ void App::print_boot_log() {
             }
             prev_source = info->source;
 
-            std::cout << "  " << schedule_color(schedule) << "│" << RESET << "  ";
-            std::cout << WHITE << info->name << RESET;
+            ++current_system;
 
-            // Dependencies
+            // Boot delay for visual effect
+            std::this_thread::sleep_for(std::chrono::microseconds(BOOT_DELAY_US));
+
+            // Build the line content (without status) for reuse
+            // Get module color from SSOT catalog
+            int module_color = log::get_module_color_code(info->source);
+
+            std::ostringstream line_content;
+            line_content << "  " << schedule_color(schedule) << "│" << RESET << " "
+                         << DIM << "[" << short_timestamp() << "]" << RESET << " "
+                         << DIM << "[Boot]" << RESET << " "
+                         << CYAN << "[" << std::setfill('0') << std::setw(3) << current_system
+                         << "/" << std::setfill('0') << std::setw(3) << total_systems << "]" << RESET << " "
+                         << "\x1b[38;5;" << module_color << "m[" << info->source << "]" << RESET << " ";
+
+            std::ostringstream line_suffix;
+            line_suffix << WHITE << info->name << RESET;
             if (!info->run_after.empty()) {
-                std::cout << DIM << " → ";
+                line_suffix << DIM << " → ";
                 for (size_t i = 0; i < info->run_after.size(); ++i) {
-                    if (i > 0) std::cout << ", ";
-                    std::cout << info->run_after[i];
+                    if (i > 0) line_suffix << ", ";
+                    line_suffix << info->run_after[i];
                 }
-                std::cout << RESET;
+                line_suffix << RESET;
             }
-            std::cout << "\n";
+
+            // Print [ .. ] line before on_start
+            std::cout << line_content.str() << YELLOW << "[ .. ]" << RESET << " " << line_suffix.str() << std::flush;
+
+            // Call on_start (logs go to queue after LogSystem starts)
+            auto* system = name_to_system[info->name];
+            if (system) {
+                system->on_start(world_.registry());
+
+                // After LogSystem starts, replace sinks with queue sink to capture all subsequent logs
+                if (!sinks_replaced && log::LogSystem::logger()) {
+                    original_sinks = log::LogSystem::logger()->sinks();
+                    log::LogSystem::logger()->sinks().clear();
+                    log::LogSystem::logger()->sinks().push_back(queue_sink);
+                    sinks_replaced = true;
+                }
+            }
+
+            // Overwrite with [OK] using \r
+            std::cout << "\r" << line_content.str() << OK_GREEN << "[OK]" << RESET << " " << line_suffix.str() << "\n" << std::flush;
         }
     }
 
-    std::cout << "\n";
-    std::cout << DIM << line << RESET << "\n\n";
+    std::cout << "\n" << std::flush;
+    std::cout << DIM << line << RESET << "\n\n" << std::flush;
+
+    // Restore original sinks
+    if (sinks_replaced && log::LogSystem::logger()) {
+        log::LogSystem::logger()->sinks().clear();
+        for (auto& sink : original_sinks) {
+            log::LogSystem::logger()->sinks().push_back(sink);
+        }
+    }
+
+    // Replay queued logs through original logger (preserves formatting)
+    if (log::LogSystem::logger()) {
+        for (const auto& entry : queue_sink->entries()) {
+            log::LogSystem::logger()->log(entry.level, "{}", entry.payload);
+        }
+    }
 }
 
 void App::sort_systems_by_dependencies() {
@@ -301,45 +418,8 @@ void App::startup() {
     // Sort systems by dependencies
     sort_systems_by_dependencies();
 
-    // Print boot log
+    // Print boot log (also calls on_start for each system)
     print_boot_log();
-
-    // Build name -> info mapping for source lookup
-    std::unordered_map<std::string, const SystemInfo*> info_map;
-    for (const auto& info : system_infos_) {
-        info_map[info.name] = &info;
-    }
-
-    // Count total systems
-    size_t total = system_infos_.size();
-    size_t current = 0;
-
-    // ANSI colors for boot log
-    constexpr const char* RESET = "\x1b[0m";
-    constexpr const char* DIM = "\x1b[38;5;243m";
-    constexpr const char* GREEN = "\x1b[38;5;71m";
-    constexpr const char* CYAN = "\x1b[36m";
-
-    // Call on_start() for ALL systems (initialization)
-    for (auto& [schedule, systems] : schedule_systems_) {
-        for (auto& system : systems) {
-            ++current;
-            const auto* info = info_map[system->name()];
-            std::string source = info ? info->source : "";
-            if (source.empty()) source = "unknown";
-
-            // Call on_start first, then log (so system logs don't interleave)
-            system->on_start(world_.registry());
-
-            // Boot log with std::cout
-            std::cout << DIM << "[" << timestamp() << "]" << RESET << " "
-                      << DIM << "[Booting]" << RESET << " "
-                      << CYAN << "[" << std::setw(3) << std::setfill('0') << current
-                      << "/" << std::setw(3) << std::setfill('0') << total << "]" << RESET << " "
-                      << GREEN << "[" << source << "]" << RESET << " "
-                      << "[" << system->name() << "] Started\n";
-        }
-    }
 
     // Run Startup schedule
     run_schedule(Schedule::Startup, 0.0f);
