@@ -49,22 +49,6 @@ private:
 using QueueSinkMt = QueueSink<std::mutex>;
 
 
-// Get current timestamp in format [YYYY-MM-DD HH:MM:SS.mmm]
-std::string timestamp() {
-    auto now = std::chrono::system_clock::now();
-    auto time = std::chrono::system_clock::to_time_t(now);
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now.time_since_epoch()) % 1000;
-
-    std::tm tm_buf{};
-    localtime_r(&time, &tm_buf);
-
-    std::ostringstream oss;
-    oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S")
-        << '.' << std::setfill('0') << std::setw(3) << ms.count();
-    return oss.str();
-}
-
 // Get terminal width (default 80 if not available)
 int get_terminal_width() {
     struct winsize w{};
@@ -295,15 +279,33 @@ void App::print_boot_log() {
                          << "/" << std::setfill('0') << std::setw(3) << total_systems << "]" << RESET << " "
                          << "\x1b[38;5;" << module_color << "m[" << info->source << "]" << RESET << " ";
 
+            // Calculate available width for dependencies
+            // Terminal width minus fixed parts: prefix + timestamp + [Boot] + [NNN/NNN] + [module] + [OK] + system name
+            int term_width = get_terminal_width();
+            size_t prefix_width = 4 + 13 + 7 + 10 + 5 + info->source.size() + 3 + info->name.size() + 4;  // +4 for " → "
+            size_t max_deps_width = (term_width > static_cast<int>(prefix_width + 10))
+                ? static_cast<size_t>(term_width) - prefix_width
+                : 40;  // Fallback minimum
+
             std::ostringstream line_suffix;
             line_suffix << WHITE << info->name << RESET;
             if (!info->run_after.empty()) {
-                line_suffix << DIM << " → ";
+                // Build dependencies string with truncation
+                std::string deps_str;
+                size_t shown_count = 0;
                 for (size_t i = 0; i < info->run_after.size(); ++i) {
-                    if (i > 0) line_suffix << ", ";
-                    line_suffix << info->run_after[i];
+                    std::string next = (i > 0 ? ", " : "") + info->run_after[i];
+                    if (deps_str.size() + next.size() > max_deps_width - 12) {  // Reserve space for " (+N more)"
+                        size_t remaining = info->run_after.size() - shown_count;
+                        if (remaining > 0) {
+                            deps_str += " (+" + std::to_string(remaining) + " more)";
+                        }
+                        break;
+                    }
+                    deps_str += next;
+                    shown_count++;
                 }
-                line_suffix << RESET;
+                line_suffix << DIM << " → " << deps_str << RESET;
             }
 
             // Print [ .. ] line before on_start
