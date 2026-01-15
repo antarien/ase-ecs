@@ -40,7 +40,7 @@ target_link_libraries(your_target PRIVATE ase-ecs)
 ### Basic App Setup
 
 ```cpp
-#include <ase/ecs/ecs.hpp>
+#include <ase/ecs/system.hpp>
 #include <ase/ecs/app.hpp>
 
 // Create application
@@ -63,7 +63,7 @@ app.run();
 ### Creating a System
 
 ```cpp
-#include <ase/ecs/ecs.hpp>
+#include <ase/ecs/system.hpp>
 
 class MovementSystem : public ase::ecs::System {
 public:

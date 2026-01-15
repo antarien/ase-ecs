@@ -12,7 +12,7 @@
  */
 
 #include "schedule.hpp"
-#include "ecs.hpp"
+#include "system.hpp"
 
 #include <atomic>
 #include <chrono>

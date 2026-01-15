@@ -8,7 +8,7 @@ project(ase-ecs
 
 # Static library
 add_library(ase-ecs STATIC
-    src/ecs.cpp
+        src/system.cpp
     src/app.cpp
 )
 add_library(ase::ecs ALIAS ase-ecs)

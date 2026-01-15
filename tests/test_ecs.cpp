@@ -2,7 +2,7 @@
  * ASE ECS Module Tests
  */
 
-#include <ase/ecs/ecs.hpp>
+#include <ase/ecs/system.hpp>
 #include <iostream>
 #include <cassert>
 
