@@ -108,53 +108,29 @@ void App::print_boot_log() {
     // Boot delay for visual effect (microseconds)
     constexpr int BOOT_DELAY_US = 15000;  // 15ms per system
 
-    // Schedule colors
+    // Schedule colors based on frequency tier
     auto schedule_color = [&](Schedule schedule) -> const char* {
-        switch (schedule) {
-            case Schedule::Startup:       return BLUE;
-            case Schedule::First:         return CYAN;
-            case Schedule::PreUpdate:     return CYAN;
-            case Schedule::FixedFirst:    return GREEN;
-            case Schedule::FixedPreUpdate: return GREEN;
-            case Schedule::FixedUpdate:   return GREEN;
-            case Schedule::FixedPostUpdate: return GREEN;
-            case Schedule::FixedLast:     return GREEN;
-            case Schedule::Update:        return GREEN;
-            case Schedule::PostUpdate:    return YELLOW;
-            case Schedule::Replication:   return MAGENTA;
-            case Schedule::Persistence:   return RED;
-            case Schedule::Last:          return YELLOW;
-            case Schedule::Shutdown:      return BLUE;
-            default:                      return WHITE;
-        }
+        const char* tier = schedule_tier(schedule);
+        if (std::string_view(tier) == "Lifecycle") return BLUE;
+        if (std::string_view(tier) == "Frame") return CYAN;
+        if (std::string_view(tier) == "Kinetic") return GREEN;
+        if (std::string_view(tier) == "Reactive") return MAGENTA;
+        if (std::string_view(tier) == "Tactical") return YELLOW;
+        if (std::string_view(tier) == "Adaptive") return YELLOW;
+        if (std::string_view(tier) == "Cyclic") return RED;
+        return WHITE;
     };
 
-    // Schedule metrics (timing info from kernel)
+    // Schedule metrics using schedule_hz()
     auto schedule_metrics = [&](Schedule schedule) -> std::string {
-        switch (schedule) {
-            case Schedule::Startup:
-                return "once";
-            case Schedule::First:
-            case Schedule::PreUpdate:
-            case Schedule::Update:
-            case Schedule::PostUpdate:
-            case Schedule::Last:
-                return "every frame";
-            case Schedule::FixedFirst:
-            case Schedule::FixedPreUpdate:
-            case Schedule::FixedUpdate:
-            case Schedule::FixedPostUpdate:
-            case Schedule::FixedLast:
-                return std::to_string(static_cast<int>(std::round(1.0f / fixed_dt_))) + " Hz";
-            case Schedule::Replication:
-                return std::to_string(static_cast<int>(std::round(1.0f / replication_dt_))) + " Hz";
-            case Schedule::Persistence:
-                return std::to_string(static_cast<int>(std::round(1.0f / persistence_dt_))) + " Hz";
-            case Schedule::Shutdown:
-                return "once";
-            default:
-                return "";
-        }
+        float hz = schedule_hz(schedule);
+        if (hz == 0.0f) return "once";
+        if (hz >= 60.0f) return "every frame";
+        if (hz >= 1.0f) return std::to_string(static_cast<int>(hz)) + " Hz";
+        float interval = schedule_interval(schedule);
+        if (interval >= 3600.0f) return std::to_string(static_cast<int>(interval / 3600.0f)) + "h";
+        if (interval >= 60.0f) return std::to_string(static_cast<int>(interval / 60.0f)) + "min";
+        return std::to_string(static_cast<int>(interval)) + "s";
     };
 
     // Short timestamp: MM:SS.mmm
@@ -199,22 +175,66 @@ void App::print_boot_log() {
     std::cout << "  ASE Schedule Bootstrap " << DIM << "(" << total_systems << " systems)" << RESET << "\n" << std::flush;
     std::cout << DIM << line << RESET << "\n" << std::flush;
 
-    // Define schedule order
+    // Define schedule order (all 44 schedules)
     static const std::vector<Schedule> schedule_order = {
-        Schedule::Startup,
-        Schedule::First,
-        Schedule::PreUpdate,
-        Schedule::FixedFirst,
-        Schedule::FixedPreUpdate,
-        Schedule::FixedUpdate,
-        Schedule::FixedPostUpdate,
-        Schedule::FixedLast,
-        Schedule::Update,
-        Schedule::PostUpdate,
-        Schedule::Replication,
-        Schedule::Persistence,
-        Schedule::Last,
-        Schedule::Shutdown
+        // Lifecycle
+        Schedule::Initialization,
+        Schedule::Configuration,
+        // Frame (~60Hz)
+        Schedule::Reception,
+        Schedule::Ingestion,
+        Schedule::Integration,
+        Schedule::Production,
+        Schedule::Conclusion,
+        // Kinetic (30Hz)
+        Schedule::Dynamics,
+        Schedule::Kinematics,
+        Schedule::Collision,
+        // Reactive (20Hz)
+        Schedule::Transmission,
+        Schedule::Synchronization,
+        // Tactical (10Hz)
+        Schedule::Perception,
+        Schedule::Reaction,
+        Schedule::Navigation,
+        Schedule::Evaluation,
+        // Adaptive (5Hz)
+        Schedule::Deliberation,
+        Schedule::Aggregation,
+        Schedule::Correlation,
+        Schedule::Coordination,
+        // Progressive (2Hz)
+        Schedule::Modulation,
+        Schedule::Regulation,
+        Schedule::Adaptation,
+        // Cyclic (1Hz)
+        Schedule::Dissemination,
+        Schedule::Preservation,
+        Schedule::Observation,
+        // Gradual (10s)
+        Schedule::Accumulation,
+        Schedule::Consolidation,
+        // Incremental (1min)
+        Schedule::Maintenance,
+        Schedule::Reconciliation,
+        // Ambient (5min)
+        Schedule::Maturation,
+        Schedule::Degradation,
+        // Periodic (15min)
+        Schedule::Regeneration,
+        Schedule::Decomposition,
+        // Epochal (1h)
+        Schedule::Evolution,
+        Schedule::Erosion,
+        // Extended (6h)
+        Schedule::Succession,
+        Schedule::Transformation,
+        // Diurnal (24h)
+        Schedule::Culmination,
+        Schedule::Renewal,
+        // Lifecycle (shutdown)
+        Schedule::Termination,
+        Schedule::Finalization
     };
 
     // Group system infos by schedule
@@ -423,16 +443,16 @@ void App::startup() {
     // Print boot log (also calls on_start for each system)
     print_boot_log();
 
-    // Run Startup schedule
-    run_schedule(Schedule::Startup, 0.0f);
+    // Run Initialization schedule
+    run_schedule(Schedule::Initialization, 0.0f);
 
     running_.store(true);
     last_frame_time_ = Clock::now();
 }
 
 void App::shutdown() {
-    // Run Shutdown schedule
-    run_schedule(Schedule::Shutdown, 0.0f);
+    // Run Finalization schedule
+    run_schedule(Schedule::Finalization, 0.0f);
 
     // ANSI colors (same as boot)
     constexpr const char* RESET = "\x1b[0m";
@@ -594,45 +614,155 @@ void App::tick(float dt) {
         dt = max_frame_time_;
     }
 
-    // First
-    run_schedule(Schedule::First, dt);
+    // =========================================================================
+    // Frame (~60Hz) - Every tick
+    // =========================================================================
+    run_schedule(Schedule::Reception, dt);
+    run_schedule(Schedule::Ingestion, dt);
+    run_schedule(Schedule::Integration, dt);
+    run_schedule(Schedule::Production, dt);
 
-    // PreUpdate
-    run_schedule(Schedule::PreUpdate, dt);
-
-    // FixedUpdate (30Hz)
+    // =========================================================================
+    // Kinetic (30Hz) - Physics simulation
+    // =========================================================================
     fixed_accumulator_ += dt;
     while (fixed_accumulator_ >= fixed_dt_) {
-        run_schedule(Schedule::FixedFirst, fixed_dt_);
-        run_schedule(Schedule::FixedPreUpdate, fixed_dt_);
-        run_schedule(Schedule::FixedUpdate, fixed_dt_);
-        run_schedule(Schedule::FixedPostUpdate, fixed_dt_);
-        run_schedule(Schedule::FixedLast, fixed_dt_);
+        run_schedule(Schedule::Dynamics, fixed_dt_);
+        run_schedule(Schedule::Kinematics, fixed_dt_);
+        run_schedule(Schedule::Collision, fixed_dt_);
         fixed_accumulator_ -= fixed_dt_;
     }
 
-    // Update
-    run_schedule(Schedule::Update, dt);
-
-    // PostUpdate
-    run_schedule(Schedule::PostUpdate, dt);
-
-    // Replication (20Hz)
+    // =========================================================================
+    // Reactive (20Hz) - Network synchronization
+    // =========================================================================
     replication_accumulator_ += dt;
     if (replication_accumulator_ >= replication_dt_) {
-        run_schedule(Schedule::Replication, replication_dt_);
+        run_schedule(Schedule::Transmission, replication_dt_);
+        run_schedule(Schedule::Synchronization, replication_dt_);
         replication_accumulator_ -= replication_dt_;
     }
 
-    // Persistence (1Hz)
+    // =========================================================================
+    // Tactical (10Hz) - Fast AI and perception
+    // =========================================================================
+    tactical_accumulator_ += dt;
+    if (tactical_accumulator_ >= tactical_dt_) {
+        run_schedule(Schedule::Perception, tactical_dt_);
+        run_schedule(Schedule::Reaction, tactical_dt_);
+        run_schedule(Schedule::Navigation, tactical_dt_);
+        run_schedule(Schedule::Evaluation, tactical_dt_);
+        tactical_accumulator_ -= tactical_dt_;
+    }
+
+    // =========================================================================
+    // Adaptive (5Hz) - AI planning and coordination
+    // =========================================================================
+    adaptive_accumulator_ += dt;
+    if (adaptive_accumulator_ >= adaptive_dt_) {
+        run_schedule(Schedule::Deliberation, adaptive_dt_);
+        run_schedule(Schedule::Aggregation, adaptive_dt_);
+        run_schedule(Schedule::Correlation, adaptive_dt_);
+        run_schedule(Schedule::Coordination, adaptive_dt_);
+        adaptive_accumulator_ -= adaptive_dt_;
+    }
+
+    // =========================================================================
+    // Progressive (2Hz) - Slow adjustments
+    // =========================================================================
+    progressive_accumulator_ += dt;
+    if (progressive_accumulator_ >= progressive_dt_) {
+        run_schedule(Schedule::Modulation, progressive_dt_);
+        run_schedule(Schedule::Regulation, progressive_dt_);
+        run_schedule(Schedule::Adaptation, progressive_dt_);
+        progressive_accumulator_ -= progressive_dt_;
+    }
+
+    // =========================================================================
+    // Cyclic (1Hz) - Regular intervals
+    // =========================================================================
     persistence_accumulator_ += dt;
     if (persistence_accumulator_ >= persistence_dt_) {
-        run_schedule(Schedule::Persistence, persistence_dt_);
+        run_schedule(Schedule::Dissemination, persistence_dt_);
+        run_schedule(Schedule::Preservation, persistence_dt_);
+        run_schedule(Schedule::Observation, persistence_dt_);
         persistence_accumulator_ -= persistence_dt_;
     }
 
-    // Last
-    run_schedule(Schedule::Last, dt);
+    // =========================================================================
+    // Gradual (10s) - Slow accumulation
+    // =========================================================================
+    gradual_accumulator_ += dt;
+    if (gradual_accumulator_ >= gradual_dt_) {
+        run_schedule(Schedule::Accumulation, gradual_dt_);
+        run_schedule(Schedule::Consolidation, gradual_dt_);
+        gradual_accumulator_ -= gradual_dt_;
+    }
+
+    // =========================================================================
+    // Incremental (1min) - Maintenance tasks
+    // =========================================================================
+    incremental_accumulator_ += dt;
+    if (incremental_accumulator_ >= incremental_dt_) {
+        run_schedule(Schedule::Maintenance, incremental_dt_);
+        run_schedule(Schedule::Reconciliation, incremental_dt_);
+        incremental_accumulator_ -= incremental_dt_;
+    }
+
+    // =========================================================================
+    // Ambient (5min) - Very slow processes
+    // =========================================================================
+    ambient_accumulator_ += dt;
+    if (ambient_accumulator_ >= ambient_dt_) {
+        run_schedule(Schedule::Maturation, ambient_dt_);
+        run_schedule(Schedule::Degradation, ambient_dt_);
+        ambient_accumulator_ -= ambient_dt_;
+    }
+
+    // =========================================================================
+    // Periodic (15min) - Periodic processes
+    // =========================================================================
+    periodic_accumulator_ += dt;
+    if (periodic_accumulator_ >= periodic_dt_) {
+        run_schedule(Schedule::Regeneration, periodic_dt_);
+        run_schedule(Schedule::Decomposition, periodic_dt_);
+        periodic_accumulator_ -= periodic_dt_;
+    }
+
+    // =========================================================================
+    // Epochal (1h) - Hourly processes
+    // =========================================================================
+    epochal_accumulator_ += dt;
+    if (epochal_accumulator_ >= epochal_dt_) {
+        run_schedule(Schedule::Evolution, epochal_dt_);
+        run_schedule(Schedule::Erosion, epochal_dt_);
+        epochal_accumulator_ -= epochal_dt_;
+    }
+
+    // =========================================================================
+    // Extended (6h) - Quarter-day processes
+    // =========================================================================
+    extended_accumulator_ += dt;
+    if (extended_accumulator_ >= extended_dt_) {
+        run_schedule(Schedule::Succession, extended_dt_);
+        run_schedule(Schedule::Transformation, extended_dt_);
+        extended_accumulator_ -= extended_dt_;
+    }
+
+    // =========================================================================
+    // Diurnal (24h) - Daily processes
+    // =========================================================================
+    diurnal_accumulator_ += dt;
+    if (diurnal_accumulator_ >= diurnal_dt_) {
+        run_schedule(Schedule::Culmination, diurnal_dt_);
+        run_schedule(Schedule::Renewal, diurnal_dt_);
+        diurnal_accumulator_ -= diurnal_dt_;
+    }
+
+    // =========================================================================
+    // Frame (~60Hz) - End of frame
+    // =========================================================================
+    run_schedule(Schedule::Conclusion, dt);
 }
 
 void App::run() {

@@ -35,7 +35,7 @@ class SystemBuilder;
 struct SystemInfo {
     std::string name;
     std::string source;  // Module/Plugin name (e.g., "ase-network", "ase-pl-sky")
-    Schedule schedule = Schedule::Update;
+    Schedule schedule = Schedule::Integration;
     std::vector<std::string> run_after;
     int priority = 0;
 };
@@ -196,7 +196,7 @@ public:
 
     /**
      * Add a system with builder for dependencies.
-     * Usage: app.add_system_with<MySystem>(Schedule::Update).run_after("OtherSystem").done();
+     * Usage: app.add_system_with<MySystem>(Schedule::Integration).run_after("OtherSystem").done();
      */
     template<typename S>
     SystemBuilder add_system_with(Schedule schedule) {
@@ -266,12 +266,36 @@ private:
     std::unordered_map<Schedule, std::vector<std::unique_ptr<System>>> schedule_systems_;
     std::vector<SystemInfo> system_infos_;
 
-    float fixed_accumulator_ = 0.0f;
-    float replication_accumulator_ = 0.0f;
-    float persistence_accumulator_ = 0.0f;
-    float fixed_dt_ = 1.0f / 30.0f;
-    float replication_dt_ = 1.0f / 20.0f;
-    float persistence_dt_ = 1.0f;
+    // Accumulators for each frequency tier
+    float fixed_accumulator_ = 0.0f;          // Kinetic (30Hz)
+    float replication_accumulator_ = 0.0f;    // Reactive (20Hz)
+    float tactical_accumulator_ = 0.0f;       // Tactical (10Hz)
+    float adaptive_accumulator_ = 0.0f;       // Adaptive (5Hz)
+    float progressive_accumulator_ = 0.0f;    // Progressive (2Hz)
+    float persistence_accumulator_ = 0.0f;    // Cyclic (1Hz)
+    float gradual_accumulator_ = 0.0f;        // Gradual (10s)
+    float incremental_accumulator_ = 0.0f;    // Incremental (1min)
+    float ambient_accumulator_ = 0.0f;        // Ambient (5min)
+    float periodic_accumulator_ = 0.0f;       // Periodic (15min)
+    float epochal_accumulator_ = 0.0f;        // Epochal (1h)
+    float extended_accumulator_ = 0.0f;       // Extended (6h)
+    float diurnal_accumulator_ = 0.0f;        // Diurnal (24h)
+
+    // Delta times for each frequency tier
+    float fixed_dt_ = 1.0f / 30.0f;           // 30Hz
+    float replication_dt_ = 1.0f / 20.0f;     // 20Hz
+    float tactical_dt_ = 1.0f / 10.0f;        // 10Hz
+    float adaptive_dt_ = 1.0f / 5.0f;         // 5Hz
+    float progressive_dt_ = 1.0f / 2.0f;      // 2Hz
+    float persistence_dt_ = 1.0f;             // 1Hz
+    float gradual_dt_ = 10.0f;                // 10s
+    float incremental_dt_ = 60.0f;            // 1min
+    float ambient_dt_ = 300.0f;               // 5min
+    float periodic_dt_ = 900.0f;              // 15min
+    float epochal_dt_ = 3600.0f;              // 1h
+    float extended_dt_ = 21600.0f;            // 6h
+    float diurnal_dt_ = 86400.0f;             // 24h
+
     float max_frame_time_ = 0.25f;
 
     std::atomic<bool> running_{false};

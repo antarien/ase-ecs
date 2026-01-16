@@ -16,7 +16,7 @@ namespace ase::ecs {
 class System;
 
 struct EcsBootstrapStateSpawnRequestComponent {
-    Schedule target_schedule = Schedule::Update;
+    Schedule target_schedule = Schedule::Integration;
     std::function<std::unique_ptr<System>()> factory = nullptr;
 };
 

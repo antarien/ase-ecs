@@ -67,7 +67,7 @@ using View = entt::view<entt::get_t<Components...>>;
  * Override tick() to implement system behavior.
  *
  * Systems are registered via the App builder:
- *   app.add_system<MySystem>(Schedule::FixedUpdate);
+ *   app.add_system<MySystem>(Schedule::Dynamics);
  */
 class System {
 public:

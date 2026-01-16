@@ -4,8 +4,8 @@
  * @file schedule.hpp
  * @brief Bevy-inspired named schedule system for ASE
  *
- * Replaces numeric SystemPhase with named schedules.
- * Each schedule can have Pre/Post variants automatically.
+ * 44 schedules across 14 frequency tiers for 5000+ systems.
+ * See ARCH_ASE_SCHEDULE.md for complete documentation.
  */
 
 #include <cstdint>
@@ -18,135 +18,315 @@ namespace ase::ecs {
  * Inspired by Bevy's schedule system.
  *
  * Schedule execution order:
- *   Startup (once) -> MainLoop (repeating) -> Shutdown (once)
+ *   Initialization (once) -> MainLoop (repeating) -> Finalization (once)
  *
- * MainLoop order:
- *   First -> PreUpdate -> FixedUpdateLoop -> Update -> PostUpdate -> Replication -> Persistence -> Last
+ * MainLoop contains multiple frequency tiers from ~60Hz down to 1/day.
  */
-enum class Schedule : uint32_t {
-    // === Lifecycle Schedules ===
-    Startup = 0,              // Run once at initialization
-    Shutdown = 1,             // Run once at exit (reverse order)
+enum class Schedule : uint8_t {
+    // =========================================================================
+    // Lifecycle (once)
+    // =========================================================================
+    Initialization = 0,       // Module setup, manager creation
+    Configuration = 1,        // Cross-module initialization
+    Termination = 2,          // Graceful shutdown preparation
+    Finalization = 3,         // Final cleanup
 
-    // === Main Loop Schedules (every frame) ===
-    First = 10,               // Very start of each frame
-    PreFirst = 11,
-    PostFirst = 12,
+    // =========================================================================
+    // Frame (~60Hz, variable)
+    // =========================================================================
+    Reception = 10,           // Buffer drain, event clearing
+    Ingestion = 11,           // Deserialization, data parsing
+    Integration = 12,         // Commands, API processing
+    Production = 13,          // Visual sync, render preparation
+    Conclusion = 14,          // Logging, debug output
 
-    PreUpdate = 20,           // Before main update (input processing)
-    PrePreUpdate = 21,
-    PostPreUpdate = 22,
+    // =========================================================================
+    // Kinetic (30Hz) - Fast physics simulation
+    // =========================================================================
+    Dynamics = 20,            // Forces, velocity, acceleration
+    Kinematics = 21,          // Position, movement, transforms
+    Collision = 22,           // Collision detection, resolution
 
-    Update = 30,              // Main variable-rate update (game logic)
-    PreUpdateMain = 31,
-    PostUpdateMain = 32,
+    // =========================================================================
+    // Reactive (20Hz) - Network synchronization
+    // =========================================================================
+    Transmission = 30,        // Network send, broadcast
+    Synchronization = 31,     // State sync, replication
 
-    PostUpdate = 40,          // After main update (transform propagation)
-    PrePostUpdate = 41,
-    PostPostUpdate = 42,
+    // =========================================================================
+    // Tactical (10Hz) - Fast AI and perception
+    // =========================================================================
+    Perception = 40,          // Sensing, awareness, detection
+    Reaction = 41,            // Quick decisions, responses
+    Navigation = 42,          // Pathfinding, movement planning
+    Evaluation = 43,          // Assessment, scoring
 
-    Last = 50,                // Very end of each frame
-    PreLast = 51,
-    PostLast = 52,
+    // =========================================================================
+    // Adaptive (5Hz) - AI planning and coordination
+    // =========================================================================
+    Deliberation = 50,        // Planning, reasoning
+    Aggregation = 51,         // Data collection, rollups
+    Correlation = 52,         // Pattern matching, relationships
+    Coordination = 53,        // Multi-agent coordination
 
-    // === Fixed Timestep Schedules (simulation @ 30Hz default) ===
-    FixedFirst = 100,
-    PreFixedFirst = 101,
-    PostFixedFirst = 102,
+    // =========================================================================
+    // Progressive (2Hz) - Slow adjustments
+    // =========================================================================
+    Modulation = 60,          // Intensity adjustments
+    Regulation = 61,          // Homeostasis, balance
+    Adaptation = 62,          // Learning, adjustment
 
-    FixedPreUpdate = 110,
-    PreFixedPreUpdate = 111,
-    PostFixedPreUpdate = 112,
+    // =========================================================================
+    // Cyclic (1Hz) - Regular intervals
+    // =========================================================================
+    Dissemination = 70,       // Hub publish, broadcasting
+    Preservation = 71,        // Database write, persistence
+    Observation = 72,         // Monitoring, watching
 
-    FixedUpdate = 120,        // Main fixed-timestep simulation (physics, gameplay)
-    PreFixedUpdate = 121,
-    PostFixedUpdate = 122,
+    // =========================================================================
+    // Gradual (10s) - Slow accumulation
+    // =========================================================================
+    Accumulation = 80,        // Statistics gathering
+    Consolidation = 81,       // Data merging
 
-    FixedPostUpdate = 130,
-    PreFixedPostUpdate = 131,
-    PostFixedPostUpdate = 132,
+    // =========================================================================
+    // Incremental (1min) - Maintenance tasks
+    // =========================================================================
+    Maintenance = 90,         // GC, cleanup
+    Reconciliation = 91,      // Consistency checks
 
-    FixedLast = 140,
-    PreFixedLast = 141,
-    PostFixedLast = 142,
+    // =========================================================================
+    // Ambient (5min) - Very slow processes
+    // =========================================================================
+    Maturation = 100,         // Slow growth
+    Degradation = 101,        // Slow decay
 
-    // === Special Purpose Schedules ===
-    Replication = 200,        // Network sync @ 20Hz
-    PreReplication = 201,
-    PostReplication = 202,
+    // =========================================================================
+    // Periodic (15min) - Periodic processes
+    // =========================================================================
+    Regeneration = 110,       // Recovery, healing
+    Decomposition = 111,      // Breakdown
 
-    Persistence = 300,        // Database flush @ 1Hz
-    PrePersistence = 301,
-    PostPersistence = 302,
+    // =========================================================================
+    // Epochal (1h) - Hourly processes
+    // =========================================================================
+    Evolution = 120,          // Long-term change
+    Erosion = 121,            // Geological processes
+
+    // =========================================================================
+    // Extended (6h) - Quarter-day processes
+    // =========================================================================
+    Succession = 130,         // Progression
+    Transformation = 131,     // Major change
+
+    // =========================================================================
+    // Diurnal (24h real-time) - Daily processes
+    // =========================================================================
+    Culmination = 140,        // Daily peak
+    Renewal = 141,            // Daily reset
+
+    // =========================================================================
+    // =========================================================================
+    // GAME-TIME SCHEDULES (Antarian Calendar - Lexicon Temporis)
+    // =========================================================================
+    // These schedules are triggered by in-game time, NOT real-time.
+    // See ARCH_ASE_CALENDAR.md for complete nomenclature and calculations.
+    //
+    // Time Units (Antarian):
+    //   TUMBRAE (Day)       = 30 hours
+    //   NOVENDRIX (Week)    = 9 TUMBRAE  (from "Neun-Tages-Interkalation")
+    //   LUNBREX (Month)     = 27 TUMBRAE (Scorpii cycle)
+    //   VECTUM MORTIS (Year)= 4021 TUMBRAE (Prime!)
+    //
+    // Moon Orbital Periods:
+    //   FRACTUM AURIX  (Aurora-B) = 9 TUMBRAE
+    //   MATRUM AURIX   (Aurora-A) = 13 TUMBRAE
+    //   AMILOX SILENTUM (Amilo)   = 19 TUMBRAE
+    //   SCORPIX OCCULTUM (Scorpii)= 27 TUMBRAE
+    // =========================================================================
+    // =========================================================================
+
+    // =========================================================================
+    // Diurnal Game-Time (1 TUMBRAE = 30 game-hours = 20 min real-time)
+    // =========================================================================
+    GameDawn = 150,           // VELUXIS - Game day starts (dawn)
+    GameDusk = 151,           // CREPEX - Game day ends (dusk)
+    GameMidnight = 152,       // NOXUMBRAE - Midnight (Serpens trigger!)
+
+    // =========================================================================
+    // Novendrix (1 NOVENDRIX = 9 TUMBRAE = 3h real-time)
+    // =========================================================================
+    Novendrix = 160,          // Weekly game events (9-day week)
+    Serpum = 161,             // Day 6 of week - Serpens day (DANGEROUS!)
+    Fractum = 162,            // Day 8 of week - Day of the Broken
+
+    // =========================================================================
+    // Lunbrex (1 LUNBREX = 27 TUMBRAE = 9h real-time)
+    // =========================================================================
+    Lunbrex = 170,            // Monthly game events (27-day month)
+    ScorpiiCycle = 171,       // Scorpii moon full cycle complete
+
+    // =========================================================================
+    // Moon Conjunctions (CONIUNCTRIX) - Two-Moon Events
+    // =========================================================================
+    CrucixAurix = 175,        // Aurora Crossing (117 TUMBRAE = 39h)
+    LunixSanguex = 176,       // Bloodmoon (513 TUMBRAE = 7.1 days)
+
+    // =========================================================================
+    // Temporix (Seasons - ~1000 TUMBRAE each, ~2 weeks real-time)
+    // =========================================================================
+    Temporix = 180,           // Season change events
+    GlacixUmbrae = 181,       // Frostschatten starts (997 TUMBRAE)
+    IgnixVertum = 182,        // Glutwende starts (1009 TUMBRAE)
+    HalitrixNebulox = 183,    // Nebelhauch starts (1013 TUMBRAE)
+    SaltatrixMortum = 184,    // Schattentanz starts - SERPENS ACTIVE! (1002 TUMBRAE)
+
+    // =========================================================================
+    // Stellar Cycles
+    // =========================================================================
+    PulsatrixAntarix = 185,   // Antares pulsation phase change (1087 TUMBRAE = 15 days)
+    CyclumArcturix = 186,     // Arcturus visibility change (2011 TUMBRAE = 28 days)
+
+    // =========================================================================
+    // Rare Multi-Moon Conjunctions
+    // =========================================================================
+    TrinitaxLuminex = 187,    // Three-Moon conjunction (2223 TUMBRAE = 31 days)
+
+    // =========================================================================
+    // Vectum Mortis (1 VECTUM = 4021 TUMBRAE = 56 days real-time)
+    // =========================================================================
+    VectumMortis = 190,       // Yearly game events
+    NewVectum = 191,          // Year change celebration
+
+    // =========================================================================
+    // Extreme Rare Events
+    // =========================================================================
+    TenebraxMagnorum = 195,   // The Great Darkness - All 4 moons align!
+                              // (6669 TUMBRAE = 93 days real-time)
+
+    // =========================================================================
+    // Epochal Game-Time (AETRIX)
+    // =========================================================================
+    AetrixMinorum = 200,      // Small epoch (1 Arcturus = 4022 TUMBRAE)
+    AetrixMaiorum = 201,      // Great epoch (10 Arcturus = 40220 TUMBRAE)
+
+    // =========================================================================
+    // Aevrix (100 Arcturus cycles = ~15 years real-time)
+    // =========================================================================
+    Aevrix = 210,             // Aeon events (402200 TUMBRAE)
 };
 
-
 /**
- * Get the Pre-schedule variant for a given schedule
+ * Get the frequency tier for a schedule
  */
-constexpr Schedule pre_schedule(Schedule s) {
-    switch (s) {
-        case Schedule::First:          return Schedule::PreFirst;
-        case Schedule::PreUpdate:      return Schedule::PrePreUpdate;
-        case Schedule::Update:         return Schedule::PreUpdateMain;
-        case Schedule::PostUpdate:     return Schedule::PrePostUpdate;
-        case Schedule::Last:           return Schedule::PreLast;
-        case Schedule::FixedFirst:     return Schedule::PreFixedFirst;
-        case Schedule::FixedPreUpdate: return Schedule::PreFixedPreUpdate;
-        case Schedule::FixedUpdate:    return Schedule::PreFixedUpdate;
-        case Schedule::FixedPostUpdate:return Schedule::PreFixedPostUpdate;
-        case Schedule::FixedLast:      return Schedule::PreFixedLast;
-        case Schedule::Replication:    return Schedule::PreReplication;
-        case Schedule::Persistence:    return Schedule::PrePersistence;
-        default:                       return s;
-    }
+constexpr const char* schedule_tier(Schedule s) {
+    uint8_t val = static_cast<uint8_t>(s);
+    // Real-Time schedules
+    if (val <= 3) return "Lifecycle";
+    if (val >= 10 && val <= 14) return "Frame";
+    if (val >= 20 && val <= 22) return "Kinetic";
+    if (val >= 30 && val <= 31) return "Reactive";
+    if (val >= 40 && val <= 43) return "Tactical";
+    if (val >= 50 && val <= 53) return "Adaptive";
+    if (val >= 60 && val <= 62) return "Progressive";
+    if (val >= 70 && val <= 72) return "Cyclic";
+    if (val >= 80 && val <= 81) return "Gradual";
+    if (val >= 90 && val <= 91) return "Incremental";
+    if (val >= 100 && val <= 101) return "Ambient";
+    if (val >= 110 && val <= 111) return "Periodic";
+    if (val >= 120 && val <= 121) return "Epochal";
+    if (val >= 130 && val <= 131) return "Extended";
+    if (val >= 140 && val <= 141) return "Diurnal";
+    // Game-Time schedules (Antarian Calendar - Lexicon Temporis)
+    if (val >= 150 && val <= 152) return "GameTumbrae";     // 1 day (20min)
+    if (val >= 160 && val <= 162) return "GameNovendrix";   // 9 days (3h)
+    if (val >= 170 && val <= 171) return "GameLunbrex";     // 27 days (9h)
+    if (val >= 175 && val <= 176) return "GameConiunctrix"; // Conjunctions
+    if (val >= 180 && val <= 184) return "GameTemporix";    // Seasons (~2 weeks)
+    if (val >= 185 && val <= 187) return "GameStellar";     // Stellar cycles
+    if (val >= 190 && val <= 191) return "GameVectum";      // Year (56 days)
+    if (val == 195) return "GameTenebrax";                  // Great Darkness
+    if (val >= 200 && val <= 201) return "GameAetrix";      // Epochs
+    if (val == 210) return "GameAevrix";                    // Aeon
+    return "Unknown";
 }
 
 /**
- * Get the Post-schedule variant for a given schedule
+ * Get the frequency in Hz for a schedule (0 = once, -1 = unknown, -2 = game-time event)
+ * Game-Time schedules return -2 as they are event-driven, not time-driven.
  */
-constexpr Schedule post_schedule(Schedule s) {
-    switch (s) {
-        case Schedule::First:          return Schedule::PostFirst;
-        case Schedule::PreUpdate:      return Schedule::PostPreUpdate;
-        case Schedule::Update:         return Schedule::PostUpdateMain;
-        case Schedule::PostUpdate:     return Schedule::PostPostUpdate;
-        case Schedule::Last:           return Schedule::PostLast;
-        case Schedule::FixedFirst:     return Schedule::PostFixedFirst;
-        case Schedule::FixedPreUpdate: return Schedule::PostFixedPreUpdate;
-        case Schedule::FixedUpdate:    return Schedule::PostFixedUpdate;
-        case Schedule::FixedPostUpdate:return Schedule::PostFixedPostUpdate;
-        case Schedule::FixedLast:      return Schedule::PostFixedLast;
-        case Schedule::Replication:    return Schedule::PostReplication;
-        case Schedule::Persistence:    return Schedule::PostPersistence;
-        default:                       return s;
-    }
+constexpr float schedule_hz(Schedule s) {
+    uint8_t val = static_cast<uint8_t>(s);
+    // Real-Time schedules
+    if (val <= 3) return 0.0f;                    // Once
+    if (val >= 10 && val <= 14) return 60.0f;     // ~60Hz
+    if (val >= 20 && val <= 22) return 30.0f;     // 30Hz
+    if (val >= 30 && val <= 31) return 20.0f;     // 20Hz
+    if (val >= 40 && val <= 43) return 10.0f;     // 10Hz
+    if (val >= 50 && val <= 53) return 5.0f;      // 5Hz
+    if (val >= 60 && val <= 62) return 2.0f;      // 2Hz
+    if (val >= 70 && val <= 72) return 1.0f;      // 1Hz
+    if (val >= 80 && val <= 81) return 0.1f;      // 0.1Hz (10s)
+    if (val >= 90 && val <= 91) return 0.017f;    // 1/min
+    if (val >= 100 && val <= 101) return 0.003f;  // 1/5min
+    if (val >= 110 && val <= 111) return 0.001f;  // 1/15min
+    if (val >= 120 && val <= 121) return 0.0003f; // 1/hour
+    if (val >= 130 && val <= 131) return 0.00005f;// 1/6hours
+    if (val >= 140 && val <= 141) return 0.00001f;// 1/day
+    // Game-Time schedules (event-driven, not Hz-based)
+    if (val >= 150) return -2.0f;                 // Game-Time event-driven
+    return -1.0f;
 }
 
 /**
- * Check if a schedule is a Pre-variant
+ * Get the interval in seconds for a schedule (0 = once/frame, -1 = unknown, -2 = game-time event)
+ * Game-Time schedules return -2 as they are event-driven based on in-game calendar.
  */
-constexpr bool is_pre_schedule(Schedule s) {
-    uint32_t val = static_cast<uint32_t>(s);
-    // Pre-variants end in 1 (11, 21, 31, 101, 111, 121, 201, 301)
-    return (val % 10) == 1 && val > 10;
+constexpr float schedule_interval(Schedule s) {
+    uint8_t val = static_cast<uint8_t>(s);
+    // Real-Time schedules
+    if (val <= 3) return 0.0f;                    // Once
+    if (val >= 10 && val <= 14) return 0.016f;    // ~16ms
+    if (val >= 20 && val <= 22) return 0.033f;    // 33ms
+    if (val >= 30 && val <= 31) return 0.05f;     // 50ms
+    if (val >= 40 && val <= 43) return 0.1f;      // 100ms
+    if (val >= 50 && val <= 53) return 0.2f;      // 200ms
+    if (val >= 60 && val <= 62) return 0.5f;      // 500ms
+    if (val >= 70 && val <= 72) return 1.0f;      // 1s
+    if (val >= 80 && val <= 81) return 10.0f;     // 10s
+    if (val >= 90 && val <= 91) return 60.0f;     // 1min
+    if (val >= 100 && val <= 101) return 300.0f;  // 5min
+    if (val >= 110 && val <= 111) return 900.0f;  // 15min
+    if (val >= 120 && val <= 121) return 3600.0f; // 1hour
+    if (val >= 130 && val <= 131) return 21600.0f;// 6hours
+    if (val >= 140 && val <= 141) return 86400.0f;// 24hours
+    // Game-Time schedules (event-driven, not interval-based)
+    if (val >= 150) return -2.0f;                 // Game-Time event-driven
+    return -1.0f;
 }
 
 /**
- * Check if a schedule is a Post-variant
+ * Check if a schedule is a lifecycle schedule (runs once)
  */
-constexpr bool is_post_schedule(Schedule s) {
-    uint32_t val = static_cast<uint32_t>(s);
-    // Post-variants end in 2 (12, 22, 32, 102, 112, 122, 202, 302)
-    return (val % 10) == 2 && val > 10;
+constexpr bool is_lifecycle_schedule(Schedule s) {
+    uint8_t val = static_cast<uint8_t>(s);
+    return val <= 3;
 }
 
 /**
- * Check if a schedule is a fixed-timestep schedule
+ * Check if a schedule is a frame schedule (~60Hz)
+ */
+constexpr bool is_frame_schedule(Schedule s) {
+    uint8_t val = static_cast<uint8_t>(s);
+    return val >= 10 && val <= 14;
+}
+
+/**
+ * Check if a schedule is a fixed-timestep schedule (30Hz or slower)
  */
 constexpr bool is_fixed_schedule(Schedule s) {
-    uint32_t val = static_cast<uint32_t>(s);
-    return val >= 100 && val < 200;
+    uint8_t val = static_cast<uint8_t>(s);
+    return val >= 20;
 }
 
 /**
@@ -154,46 +334,110 @@ constexpr bool is_fixed_schedule(Schedule s) {
  */
 constexpr std::string_view schedule_name(Schedule s) {
     switch (s) {
-        case Schedule::Startup:           return "Startup";
-        case Schedule::Shutdown:          return "Shutdown";
-        case Schedule::First:             return "First";
-        case Schedule::PreFirst:          return "PreFirst";
-        case Schedule::PostFirst:         return "PostFirst";
-        case Schedule::PreUpdate:         return "PreUpdate";
-        case Schedule::PrePreUpdate:      return "PrePreUpdate";
-        case Schedule::PostPreUpdate:     return "PostPreUpdate";
-        case Schedule::Update:            return "Update";
-        case Schedule::PreUpdateMain:     return "PreUpdateMain";
-        case Schedule::PostUpdateMain:    return "PostUpdateMain";
-        case Schedule::PostUpdate:        return "PostUpdate";
-        case Schedule::PrePostUpdate:     return "PrePostUpdate";
-        case Schedule::PostPostUpdate:    return "PostPostUpdate";
-        case Schedule::Last:              return "Last";
-        case Schedule::PreLast:           return "PreLast";
-        case Schedule::PostLast:          return "PostLast";
-        case Schedule::FixedFirst:        return "FixedFirst";
-        case Schedule::PreFixedFirst:     return "PreFixedFirst";
-        case Schedule::PostFixedFirst:    return "PostFixedFirst";
-        case Schedule::FixedPreUpdate:    return "FixedPreUpdate";
-        case Schedule::PreFixedPreUpdate: return "PreFixedPreUpdate";
-        case Schedule::PostFixedPreUpdate:return "PostFixedPreUpdate";
-        case Schedule::FixedUpdate:       return "FixedUpdate";
-        case Schedule::PreFixedUpdate:    return "PreFixedUpdate";
-        case Schedule::PostFixedUpdate:   return "PostFixedUpdate";
-        case Schedule::FixedPostUpdate:   return "FixedPostUpdate";
-        case Schedule::PreFixedPostUpdate:return "PreFixedPostUpdate";
-        case Schedule::PostFixedPostUpdate:return "PostFixedPostUpdate";
-        case Schedule::FixedLast:         return "FixedLast";
-        case Schedule::PreFixedLast:      return "PreFixedLast";
-        case Schedule::PostFixedLast:     return "PostFixedLast";
-        case Schedule::Replication:       return "Replication";
-        case Schedule::PreReplication:    return "PreReplication";
-        case Schedule::PostReplication:   return "PostReplication";
-        case Schedule::Persistence:       return "Persistence";
-        case Schedule::PrePersistence:    return "PrePersistence";
-        case Schedule::PostPersistence:   return "PostPersistence";
-        default:                          return "Unknown";
+        // Lifecycle
+        case Schedule::Initialization:  return "Initialization";
+        case Schedule::Configuration:   return "Configuration";
+        case Schedule::Termination:     return "Termination";
+        case Schedule::Finalization:    return "Finalization";
+        // Frame
+        case Schedule::Reception:       return "Reception";
+        case Schedule::Ingestion:       return "Ingestion";
+        case Schedule::Integration:     return "Integration";
+        case Schedule::Production:      return "Production";
+        case Schedule::Conclusion:      return "Conclusion";
+        // Kinetic
+        case Schedule::Dynamics:        return "Dynamics";
+        case Schedule::Kinematics:      return "Kinematics";
+        case Schedule::Collision:       return "Collision";
+        // Reactive
+        case Schedule::Transmission:    return "Transmission";
+        case Schedule::Synchronization: return "Synchronization";
+        // Tactical
+        case Schedule::Perception:      return "Perception";
+        case Schedule::Reaction:        return "Reaction";
+        case Schedule::Navigation:      return "Navigation";
+        case Schedule::Evaluation:      return "Evaluation";
+        // Adaptive
+        case Schedule::Deliberation:    return "Deliberation";
+        case Schedule::Aggregation:     return "Aggregation";
+        case Schedule::Correlation:     return "Correlation";
+        case Schedule::Coordination:    return "Coordination";
+        // Progressive
+        case Schedule::Modulation:      return "Modulation";
+        case Schedule::Regulation:      return "Regulation";
+        case Schedule::Adaptation:      return "Adaptation";
+        // Cyclic
+        case Schedule::Dissemination:   return "Dissemination";
+        case Schedule::Preservation:    return "Preservation";
+        case Schedule::Observation:     return "Observation";
+        // Gradual
+        case Schedule::Accumulation:    return "Accumulation";
+        case Schedule::Consolidation:   return "Consolidation";
+        // Incremental
+        case Schedule::Maintenance:     return "Maintenance";
+        case Schedule::Reconciliation:  return "Reconciliation";
+        // Ambient
+        case Schedule::Maturation:      return "Maturation";
+        case Schedule::Degradation:     return "Degradation";
+        // Periodic
+        case Schedule::Regeneration:    return "Regeneration";
+        case Schedule::Decomposition:   return "Decomposition";
+        // Epochal
+        case Schedule::Evolution:       return "Evolution";
+        case Schedule::Erosion:         return "Erosion";
+        // Extended
+        case Schedule::Succession:      return "Succession";
+        case Schedule::Transformation:  return "Transformation";
+        // Diurnal (Real-Time)
+        case Schedule::Culmination:     return "Culmination";
+        case Schedule::Renewal:         return "Renewal";
+        // =====================================================================
+        // GAME-TIME SCHEDULES (Antarian Calendar - Lexicon Temporis)
+        // =====================================================================
+        // GameTumbrae (1 TUMBRAE = 30 hours = 20 min real-time)
+        case Schedule::GameDawn:        return "GameDawn";
+        case Schedule::GameDusk:        return "GameDusk";
+        case Schedule::GameMidnight:    return "GameMidnight";
+        // GameNovendrix (9 TUMBRAE = 3h real-time)
+        case Schedule::Novendrix:       return "Novendrix";
+        case Schedule::Serpum:          return "Serpum";
+        case Schedule::Fractum:         return "Fractum";
+        // GameLunbrex (27 TUMBRAE = 9h real-time)
+        case Schedule::Lunbrex:         return "Lunbrex";
+        case Schedule::ScorpiiCycle:    return "ScorpiiCycle";
+        // GameConiunctrix (Moon Conjunctions)
+        case Schedule::CrucixAurix:     return "CrucixAurix";
+        case Schedule::LunixSanguex:    return "LunixSanguex";
+        // GameTemporix (Seasons ~2 weeks real-time)
+        case Schedule::Temporix:        return "Temporix";
+        case Schedule::GlacixUmbrae:    return "GlacixUmbrae";
+        case Schedule::IgnixVertum:     return "IgnixVertum";
+        case Schedule::HalitrixNebulox: return "HalitrixNebulox";
+        case Schedule::SaltatrixMortum: return "SaltatrixMortum";
+        // GameStellar (Stellar cycles)
+        case Schedule::PulsatrixAntarix:return "PulsatrixAntarix";
+        case Schedule::CyclumArcturix:  return "CyclumArcturix";
+        case Schedule::TrinitaxLuminex: return "TrinitaxLuminex";
+        // GameVectum (1 VECTUM = 4021 TUMBRAE = 56 days)
+        case Schedule::VectumMortis:    return "VectumMortis";
+        case Schedule::NewVectum:       return "NewVectum";
+        // GameTenebrax (The Great Darkness)
+        case Schedule::TenebraxMagnorum:return "TenebraxMagnorum";
+        // GameAetrix (Epochs)
+        case Schedule::AetrixMinorum:   return "AetrixMinorum";
+        case Schedule::AetrixMaiorum:   return "AetrixMaiorum";
+        // GameAevrix (Aeon)
+        case Schedule::Aevrix:          return "Aevrix";
+        default:                        return "Unknown";
     }
+}
+
+/**
+ * Check if a schedule is a game-time schedule (event-driven by Antarian calendar)
+ */
+constexpr bool is_gametime_schedule(Schedule s) {
+    uint8_t val = static_cast<uint8_t>(s);
+    return val >= 150;
 }
 
 } // namespace ase::ecs
@@ -203,7 +447,7 @@ namespace std {
 template<>
 struct hash<ase::ecs::Schedule> {
     size_t operator()(ase::ecs::Schedule s) const noexcept {
-        return hash<uint32_t>{}(static_cast<uint32_t>(s));
+        return hash<uint8_t>{}(static_cast<uint8_t>(s));
     }
 };
 } // namespace std
