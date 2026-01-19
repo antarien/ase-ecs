@@ -1,11 +1,49 @@
 #pragma once
 
 /**
- * @file schedule.hpp
- * @brief Bevy-inspired named schedule system for ASE
+ * ASE CORE INFRASTRUCTURE HEADER
  *
- * 44 schedules across 14 frequency tiers for 5000+ systems.
- * See ARCH_ASE_SCHEDULE.md for complete documentation.
+ * @file        schedule.hpp
+ * @brief       Bevy-inspired named schedule system for ASE
+ * @description Defines 66 schedules across 21 frequency tiers for 5000+ systems.
+ *              42 Real-Time schedules (Lifecycle to Diurnal) plus 24 Game-Time
+ *              schedules based on the Antarian Calendar (Lexicon Temporis).
+ *              See ARCH_ASE_SCHEDULE.md for complete documentation.
+ *
+ * @module      ase-ecs
+ * @layer       1 (Core)
+ * @category    schedule
+ * @created     2025-01-01
+ * @modified    2026-01-19
+ * @version     2.0.0
+ *
+ * LAYER RULES:
+ *   Layer 0 (Foundation): NO dependencies on other ASE modules (only std::)
+ *   Layer 1 (Core):       May depend on Layer 0 only
+ *
+ * USAGE:
+ *   #include <ase/ecs/schedule.hpp>
+ *   app.add_system<MySystem>(ase::ecs::Schedule::Dynamics);
+ *
+ * CORE INFRASTRUCTURE COMPLIANCE
+ *
+ * [ ] NOT an ECS Component or System
+ * [ ] Layer dependencies correct (L0: no ASE deps, L1: L0 only)
+ * [ ] No global mutable state (constexpr/const only)
+ * [ ] No singletons or static mutable variables
+ * [ ] Thread-safe by design (pure functions or explicit mutex)
+ * [ ] All public functions documented with @brief, @param, @return
+ * [ ] constexpr where possible (compile-time evaluation)
+ * [ ] noexcept where possible (no-throw guarantee)
+ * [ ] [[nodiscard]] on functions returning values
+ * [ ] No magic numbers (use named constants)
+ * [ ] No implicit conversions (use explicit constructors)
+ * [ ] Header-only OR header+cpp pattern (not mixed)
+ * [ ] Include guards via #pragma once
+ * [ ] Namespace matches module: ase::{module}
+ * [ ] No circular dependencies
+ * [ ] No macros (except include guards) - use constexpr/templates
+ * [ ] API stable (changes require version bump)
  */
 
 #include <cstdint>
@@ -13,14 +51,30 @@
 
 namespace ase::ecs {
 
+// =============================================================================
+// SCHEDULE ENUM
+// =============================================================================
+
 /**
- * Named schedules that define when systems execute.
- * Inspired by Bevy's schedule system.
+ * @brief Named schedules that define when systems execute
+ *
+ * Inspired by Bevy's schedule system. 66 schedules across 21 frequency tiers.
  *
  * Schedule execution order:
  *   Initialization (once) -> MainLoop (repeating) -> Finalization (once)
  *
- * MainLoop contains multiple frequency tiers from ~60Hz down to 1/day.
+ * MainLoop contains multiple frequency tiers from ~60Hz down to 1/day,
+ * plus Game-Time schedules triggered by the Antarian Calendar.
+ *
+ * Real-Time Schedules (42):
+ *   Lifecycle (4), Frame (5), Kinetic (3), Reactive (2), Tactical (4),
+ *   Adaptive (4), Progressive (3), Cyclic (3), Gradual (2), Incremental (2),
+ *   Ambient (2), Periodic (2), Epochal (2), Extended (2), Diurnal (2)
+ *
+ * Game-Time Schedules (24):
+ *   GameTumbrae (3), GameNovendrix (3), GameLunbrex (2), GameConiunctrix (2),
+ *   GameTemporix (5), GameStellar (3), GameVectum (2), GameTenebrax (1),
+ *   GameAetrix (2), GameAevrix (1)
  */
 enum class Schedule : uint8_t {
     // =========================================================================
@@ -216,10 +270,16 @@ enum class Schedule : uint8_t {
     Aevrix = 210,             // Aeon events (402200 TUMBRAE)
 };
 
+// =============================================================================
+// HELPER FUNCTIONS
+// =============================================================================
+
 /**
- * Get the frequency tier for a schedule
+ * @brief Get the frequency tier name for a schedule
+ * @param s The schedule to query
+ * @return Tier name as string (e.g., "Lifecycle", "Frame", "GameTumbrae")
  */
-constexpr const char* schedule_tier(Schedule s) {
+[[nodiscard]] constexpr const char* schedule_tier(Schedule s) noexcept {
     uint8_t val = static_cast<uint8_t>(s);
     // Real-Time schedules
     if (val <= 3) return "Lifecycle";
@@ -238,24 +298,27 @@ constexpr const char* schedule_tier(Schedule s) {
     if (val >= 130 && val <= 131) return "Extended";
     if (val >= 140 && val <= 141) return "Diurnal";
     // Game-Time schedules (Antarian Calendar - Lexicon Temporis)
-    if (val >= 150 && val <= 152) return "GameTumbrae";     // 1 day (20min)
-    if (val >= 160 && val <= 162) return "GameNovendrix";   // 9 days (3h)
-    if (val >= 170 && val <= 171) return "GameLunbrex";     // 27 days (9h)
-    if (val >= 175 && val <= 176) return "GameConiunctrix"; // Conjunctions
-    if (val >= 180 && val <= 184) return "GameTemporix";    // Seasons (~2 weeks)
-    if (val >= 185 && val <= 187) return "GameStellar";     // Stellar cycles
-    if (val >= 190 && val <= 191) return "GameVectum";      // Year (56 days)
-    if (val == 195) return "GameTenebrax";                  // Great Darkness
-    if (val >= 200 && val <= 201) return "GameAetrix";      // Epochs
-    if (val == 210) return "GameAevrix";                    // Aeon
+    if (val >= 150 && val <= 152) return "GameTumbrae";
+    if (val >= 160 && val <= 162) return "GameNovendrix";
+    if (val >= 170 && val <= 171) return "GameLunbrex";
+    if (val >= 175 && val <= 176) return "GameConiunctrix";
+    if (val >= 180 && val <= 184) return "GameTemporix";
+    if (val >= 185 && val <= 187) return "GameStellar";
+    if (val >= 190 && val <= 191) return "GameVectum";
+    if (val == 195) return "GameTenebrax";
+    if (val >= 200 && val <= 201) return "GameAetrix";
+    if (val == 210) return "GameAevrix";
     return "Unknown";
 }
 
 /**
- * Get the frequency in Hz for a schedule (0 = once, -1 = unknown, -2 = game-time event)
+ * @brief Get the frequency in Hz for a schedule
+ * @param s The schedule to query
+ * @return Frequency in Hz (0 = once, -1 = unknown, -2 = game-time event)
+ *
  * Game-Time schedules return -2 as they are event-driven, not time-driven.
  */
-constexpr float schedule_hz(Schedule s) {
+[[nodiscard]] constexpr float schedule_hz(Schedule s) noexcept {
     uint8_t val = static_cast<uint8_t>(s);
     // Real-Time schedules
     if (val <= 3) return 0.0f;                    // Once
@@ -279,10 +342,13 @@ constexpr float schedule_hz(Schedule s) {
 }
 
 /**
- * Get the interval in seconds for a schedule (0 = once/frame, -1 = unknown, -2 = game-time event)
+ * @brief Get the interval in seconds for a schedule
+ * @param s The schedule to query
+ * @return Interval in seconds (0 = once/frame, -1 = unknown, -2 = game-time event)
+ *
  * Game-Time schedules return -2 as they are event-driven based on in-game calendar.
  */
-constexpr float schedule_interval(Schedule s) {
+[[nodiscard]] constexpr float schedule_interval(Schedule s) noexcept {
     uint8_t val = static_cast<uint8_t>(s);
     // Real-Time schedules
     if (val <= 3) return 0.0f;                    // Once
@@ -306,33 +372,51 @@ constexpr float schedule_interval(Schedule s) {
 }
 
 /**
- * Check if a schedule is a lifecycle schedule (runs once)
+ * @brief Check if a schedule is a lifecycle schedule (runs once)
+ * @param s The schedule to check
+ * @return true if lifecycle schedule (Initialization, Configuration, Termination, Finalization)
  */
-constexpr bool is_lifecycle_schedule(Schedule s) {
+[[nodiscard]] constexpr bool is_lifecycle_schedule(Schedule s) noexcept {
     uint8_t val = static_cast<uint8_t>(s);
     return val <= 3;
 }
 
 /**
- * Check if a schedule is a frame schedule (~60Hz)
+ * @brief Check if a schedule is a frame schedule (~60Hz)
+ * @param s The schedule to check
+ * @return true if frame schedule (Reception, Ingestion, Integration, Production, Conclusion)
  */
-constexpr bool is_frame_schedule(Schedule s) {
+[[nodiscard]] constexpr bool is_frame_schedule(Schedule s) noexcept {
     uint8_t val = static_cast<uint8_t>(s);
     return val >= 10 && val <= 14;
 }
 
 /**
- * Check if a schedule is a fixed-timestep schedule (30Hz or slower)
+ * @brief Check if a schedule is a fixed-timestep schedule (30Hz or slower)
+ * @param s The schedule to check
+ * @return true if fixed-timestep (Kinetic and slower)
  */
-constexpr bool is_fixed_schedule(Schedule s) {
+[[nodiscard]] constexpr bool is_fixed_schedule(Schedule s) noexcept {
     uint8_t val = static_cast<uint8_t>(s);
     return val >= 20;
 }
 
 /**
- * Get schedule name as string (for logging)
+ * @brief Check if a schedule is a game-time schedule (event-driven by Antarian calendar)
+ * @param s The schedule to check
+ * @return true if game-time schedule (GameDawn and later)
  */
-constexpr std::string_view schedule_name(Schedule s) {
+[[nodiscard]] constexpr bool is_gametime_schedule(Schedule s) noexcept {
+    uint8_t val = static_cast<uint8_t>(s);
+    return val >= 150;
+}
+
+/**
+ * @brief Get schedule name as string (for logging)
+ * @param s The schedule to query
+ * @return Schedule name as string_view
+ */
+[[nodiscard]] constexpr std::string_view schedule_name(Schedule s) noexcept {
     switch (s) {
         // Lifecycle
         case Schedule::Initialization:  return "Initialization";
@@ -432,22 +516,22 @@ constexpr std::string_view schedule_name(Schedule s) {
     }
 }
 
-/**
- * Check if a schedule is a game-time schedule (event-driven by Antarian calendar)
- */
-constexpr bool is_gametime_schedule(Schedule s) {
-    uint8_t val = static_cast<uint8_t>(s);
-    return val >= 150;
-}
+}  // namespace ase::ecs
 
-} // namespace ase::ecs
+// =============================================================================
+// STD HASH SPECIALIZATION
+// =============================================================================
 
-// Hash specialization for Schedule (required for unordered_map)
 namespace std {
+
+/**
+ * @brief Hash specialization for Schedule (required for unordered_map)
+ */
 template<>
 struct hash<ase::ecs::Schedule> {
-    size_t operator()(ase::ecs::Schedule s) const noexcept {
+    [[nodiscard]] size_t operator()(ase::ecs::Schedule s) const noexcept {
         return hash<uint8_t>{}(static_cast<uint8_t>(s));
     }
 };
-} // namespace std
+
+}  // namespace std
