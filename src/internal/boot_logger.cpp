@@ -242,12 +242,14 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
                 line_content << ansi::DIM << "[" << short_timestamp() << "]" << ansi::RESET << " ";
             }
 
-            // Counter format: [module_idx/global_idx/module_total/global_total]
+            // Counter format: [module_idx/module_total] [global_idx/global_total]
             line_content << ansi::DIM << "[Boot]" << ansi::RESET << " "
                          << ansi::CYAN << "["
                          << std::setfill('0') << std::setw(3) << module_idx << "/"
+                         << std::setfill('0') << std::setw(3) << module_total << "]"
+                         << ansi::RESET << " "
+                         << ansi::DIM << "["
                          << std::setfill('0') << std::setw(3) << current_system << "/"
-                         << std::setfill('0') << std::setw(3) << module_total << "/"
                          << std::setfill('0') << std::setw(3) << total_systems << "]"
                          << ansi::RESET << " "
                          << "\x1b[38;5;" << mod_color << "m[" << info->source << "]" << ansi::RESET << " ";

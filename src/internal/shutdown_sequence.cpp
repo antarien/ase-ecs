@@ -138,13 +138,15 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
                 line_content << ansi::DIM << "[" << short_timestamp() << "]" << ansi::RESET << " ";
             }
 
-            // Counter format: [module_remaining/global_remaining/module_total/global_total]
+            // Counter format: [module_remaining/module_total] [global_remaining/global_total]
             std::string version = info ? info->version : "";
             line_content << ansi::DIM << "[Down]" << ansi::RESET << " "
                          << ansi::CYAN << "["
                          << std::setfill('0') << std::setw(3) << module_remaining << "/"
+                         << std::setfill('0') << std::setw(3) << module_total << "]"
+                         << ansi::RESET << " "
+                         << ansi::DIM << "["
                          << std::setfill('0') << std::setw(3) << remaining << "/"
-                         << std::setfill('0') << std::setw(3) << module_total << "/"
                          << std::setfill('0') << std::setw(3) << total << "]"
                          << ansi::RESET << " "
                          << "\x1b[38;5;" << src_color << "m[" << source << "]" << ansi::RESET << " ";
