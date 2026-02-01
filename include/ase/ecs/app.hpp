@@ -18,27 +18,47 @@
 #include <chrono>
 #include <memory>
 #include <string>
-#include <unordered_map>
+#include <type_traits>
 #include <vector>
-#include <functional>
 
 namespace ase::ecs {
+
+// =============================================================================
+// Version Detection Helper
+// =============================================================================
+
+namespace detail {
+
+// SFINAE helper to detect if T has a static version() method
+template<typename T, typename = void>
+struct has_version : std::false_type {};
+
+template<typename T>
+struct has_version<T, std::void_t<decltype(T::version())>> : std::true_type {};
+
+template<typename T>
+inline constexpr bool has_version_v = has_version<T>::value;
+
+// Get version if available, otherwise return empty string
+template<typename T>
+const char* get_version() {
+    if constexpr (has_version_v<T>) {
+        return T::version();
+    } else {
+        return "";
+    }
+}
+
+}  // namespace detail
 
 // Forward declarations
 class App;
 class SystemBuilder;
 
-// =============================================================================
-// SystemInfo - Metadata for boot log
-// =============================================================================
-
-struct SystemInfo {
-    std::string name;
-    std::string source;  // Module/Plugin name (e.g., "ase-network", "ase-pl-sky")
-    Schedule schedule = Schedule::Integration;
-    std::vector<std::string> run_after;
-    int priority = 0;
-};
+namespace internal {
+class TickScheduler;
+class SystemRegistry;
+}  // namespace internal
 
 // =============================================================================
 // Kernel Concept (Layer 2) - Core kernel, foundation for modules/plugins
@@ -91,6 +111,7 @@ private:
     std::unique_ptr<System> system_;
     std::vector<std::string> after_;
     std::string source_;
+    std::string version_;
     int priority_ = 0;
     bool finalized_ = false;
 };
@@ -106,7 +127,7 @@ public:
     using TimePoint = Clock::time_point;
 
     App();
-    ~App() = default;
+    ~App();
 
     App(const App&) = delete;
     App& operator=(const App&) = delete;
@@ -131,8 +152,10 @@ public:
     App& add_kernel() {
         K kernel;
         current_source_ = K::name();
+        current_version_ = detail::get_version<K>();
         kernel.build(*this);
         current_source_.clear();
+        current_version_.clear();
         return *this;
     }
 
@@ -143,16 +166,20 @@ public:
     App& add_plugin() {
         P plugin;
         current_source_ = P::name();
+        current_version_ = detail::get_version<P>();
         plugin.build(*this);
         current_source_.clear();
+        current_version_.clear();
         return *this;
     }
 
     template<Plugin P>
     App& add_plugin(P&& plugin) {
-        current_source_ = P::name();
+        current_source_ = std::decay_t<P>::name();
+        current_version_ = detail::get_version<std::decay_t<P>>();
         plugin.build(*this);
         current_source_.clear();
+        current_version_.clear();
         return *this;
     }
 
@@ -163,16 +190,20 @@ public:
     App& add_module() {
         M module;
         current_source_ = M::name();
+        current_version_ = detail::get_version<M>();
         module.build(*this);
         current_source_.clear();
+        current_version_.clear();
         return *this;
     }
 
     template<Module M>
     App& add_module(M&& module) {
-        current_source_ = M::name();
+        current_source_ = std::decay_t<M>::name();
+        current_version_ = detail::get_version<std::decay_t<M>>();
         module.build(*this);
         current_source_.clear();
+        current_version_.clear();
         return *this;
     }
 
@@ -182,15 +213,7 @@ public:
     template<typename S>
     App& add_system(Schedule schedule) {
         auto system = std::make_unique<S>();
-        SystemInfo info{
-            .name = system->name(),
-            .source = current_source_,
-            .schedule = schedule,
-            .run_after = {},
-            .priority = 0
-        };
-        system_infos_.push_back(std::move(info));
-        schedule_systems_[schedule].push_back(std::move(system));
+        finalize_system(schedule, std::move(system), {}, 0, current_source_, current_version_);
         return *this;
     }
 
@@ -205,13 +228,22 @@ public:
     }
 
     /**
+     * Set current version for system registration.
+     */
+    App& set_version(std::string_view version) {
+        current_version_ = version;
+        return *this;
+    }
+
+    /**
      * Internal: Called by SystemBuilder to finalize system addition.
      */
     void finalize_system(Schedule schedule, std::unique_ptr<System> system,
                          std::vector<std::string> after, int priority,
-                         std::string source = {});
+                         std::string source = {}, std::string version = {});
 
     const std::string& current_source() const { return current_source_; }
+    const std::string& current_version() const { return current_version_; }
 
     // =========================================================================
     // Lifecycle
@@ -259,48 +291,16 @@ public:
     const Registry& registry() const { return world_.registry(); }
 
 private:
-    void print_boot_log();
-    void sort_systems_by_dependencies();
-
     World world_;
-    std::unordered_map<Schedule, std::vector<std::unique_ptr<System>>> schedule_systems_;
-    std::vector<SystemInfo> system_infos_;
 
-    // Accumulators for each frequency tier
-    float fixed_accumulator_ = 0.0f;          // Kinetic (30Hz)
-    float replication_accumulator_ = 0.0f;    // Reactive (20Hz)
-    float tactical_accumulator_ = 0.0f;       // Tactical (10Hz)
-    float adaptive_accumulator_ = 0.0f;       // Adaptive (5Hz)
-    float progressive_accumulator_ = 0.0f;    // Progressive (2Hz)
-    float persistence_accumulator_ = 0.0f;    // Cyclic (1Hz)
-    float gradual_accumulator_ = 0.0f;        // Gradual (10s)
-    float incremental_accumulator_ = 0.0f;    // Incremental (1min)
-    float ambient_accumulator_ = 0.0f;        // Ambient (5min)
-    float periodic_accumulator_ = 0.0f;       // Periodic (15min)
-    float epochal_accumulator_ = 0.0f;        // Epochal (1h)
-    float extended_accumulator_ = 0.0f;       // Extended (6h)
-    float diurnal_accumulator_ = 0.0f;        // Diurnal (24h)
-
-    // Delta times for each frequency tier
-    float fixed_dt_ = 1.0f / 30.0f;           // 30Hz
-    float replication_dt_ = 1.0f / 20.0f;     // 20Hz
-    float tactical_dt_ = 1.0f / 10.0f;        // 10Hz
-    float adaptive_dt_ = 1.0f / 5.0f;         // 5Hz
-    float progressive_dt_ = 1.0f / 2.0f;      // 2Hz
-    float persistence_dt_ = 1.0f;             // 1Hz
-    float gradual_dt_ = 10.0f;                // 10s
-    float incremental_dt_ = 60.0f;            // 1min
-    float ambient_dt_ = 300.0f;               // 5min
-    float periodic_dt_ = 900.0f;              // 15min
-    float epochal_dt_ = 3600.0f;              // 1h
-    float extended_dt_ = 21600.0f;            // 6h
-    float diurnal_dt_ = 86400.0f;             // 24h
-
-    float max_frame_time_ = 0.25f;
+    // Internal components (PIMPL for clean separation)
+    std::unique_ptr<internal::TickScheduler> tick_scheduler_;
+    std::unique_ptr<internal::SystemRegistry> system_registry_;
 
     std::atomic<bool> running_{false};
     TimePoint last_frame_time_;
     std::string current_source_;
+    std::string current_version_;
 };
 
 // =============================================================================
@@ -308,7 +308,8 @@ private:
 // =============================================================================
 
 inline SystemBuilder::SystemBuilder(App& app, Schedule schedule, std::unique_ptr<System> system)
-    : app_(app), schedule_(schedule), system_(std::move(system)), source_(app.current_source()) {}
+    : app_(app), schedule_(schedule), system_(std::move(system)),
+      source_(app.current_source()), version_(app.current_version()) {}
 
 inline SystemBuilder& SystemBuilder::run_after(std::string_view name) {
     after_.emplace_back(name);
@@ -322,7 +323,8 @@ inline SystemBuilder& SystemBuilder::with_priority(int priority) {
 
 inline App& SystemBuilder::done() {
     if (!finalized_) {
-        app_.finalize_system(schedule_, std::move(system_), std::move(after_), priority_, std::move(source_));
+        app_.finalize_system(schedule_, std::move(system_), std::move(after_), priority_,
+                             std::move(source_), std::move(version_));
         finalized_ = true;
     }
     return app_;
@@ -330,7 +332,8 @@ inline App& SystemBuilder::done() {
 
 inline SystemBuilder::~SystemBuilder() {
     if (!finalized_ && system_) {
-        app_.finalize_system(schedule_, std::move(system_), std::move(after_), priority_, std::move(source_));
+        app_.finalize_system(schedule_, std::move(system_), std::move(after_), priority_,
+                             std::move(source_), std::move(version_));
     }
 }
 

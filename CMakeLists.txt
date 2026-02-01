@@ -47,6 +47,13 @@ endif()
 
 project(ase-ecs VERSION ${ASE_ECS_VERSION} LANGUAGES CXX)
 
+# Generate version.hpp from template (SSOT)
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/ase/ecs/version.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/include/ase/ecs/version.hpp"
+    @ONLY
+)
+
 # ==============================================================================
 # BUILD CONFIGURATION
 # ==============================================================================
@@ -62,6 +69,17 @@ add_library(${PROJECT_NAME} STATIC
     ]]
     src/system.cpp
     src/app.cpp
+
+    #[[
+    INTERNAL
+    Internal implementation details for App decomposition.
+    ]]
+    src/internal/terminal_utils.cpp
+    src/internal/system_registry.cpp
+    src/internal/dependency_sorter.cpp
+    src/internal/tick_scheduler.cpp
+    src/internal/boot_logger.cpp
+    src/internal/shutdown_sequence.cpp
 )
 add_library(ase::ecs ALIAS ${PROJECT_NAME})
 
