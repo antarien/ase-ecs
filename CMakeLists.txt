@@ -1,5 +1,4 @@
 cmake_minimum_required(VERSION 3.20)
-project(ase-ecs VERSION 0.1.0 LANGUAGES CXX)
 
 #[[
 ASE CORE BUILD CONFIGURATION
@@ -11,9 +10,9 @@ ASE CORE BUILD CONFIGURATION
 
 @module      ase-ecs
 @layer       1 (Core)
-@created     2025-01-01
-@modified    2025-01-30
-@version     1.0.0
+@created     2025-12-15
+@modified    2026-01-30
+@version     00.00.32.00032 [core]
 
 CMAKE MODULE COMPLIANCE
 
@@ -29,6 +28,30 @@ CMAKE MODULE COMPLIANCE
 [ ] include(GNUInstallDirs) for installation
 [ ] install(DIRECTORY include/ ...) for headers
 ]]
+
+# Parse local VERSION (SSOT) if not building from root
+if(NOT DEFINED ASE_ECS_VERSION)
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
+        message(FATAL_ERROR "VERSION file not found: ${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
+    endif()
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" _VERSION_LINES)
+    foreach(_LINE ${_VERSION_LINES})
+        if(_LINE MATCHES "^ASE_ECS=(.*)$")
+            set(ASE_ECS_VERSION "${CMAKE_MATCH_1}")
+        endif()
+    endforeach()
+    if(NOT DEFINED ASE_ECS_VERSION)
+        message(FATAL_ERROR "ASE_ECS version not found in VERSION file")
+    endif()
+endif()
+
+project(ase-ecs VERSION ${ASE_ECS_VERSION} LANGUAGES CXX)
+
+# ==============================================================================
+# BUILD CONFIGURATION
+# ==============================================================================
+
+
 
 message(STATUS "Configuring ${PROJECT_NAME} v${PROJECT_VERSION}")
 
