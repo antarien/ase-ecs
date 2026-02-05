@@ -145,6 +145,24 @@ public:
     }
 
     /**
+     * Set boot delay per system in microseconds (default: 0).
+     * Use for visual boot sequence effect.
+     */
+    App& set_boot_delay(int delay_us) {
+        boot_delay_us_ = delay_us;
+        return *this;
+    }
+
+    /**
+     * Set shutdown delay per system in microseconds (default: 0).
+     * Use for visual shutdown sequence effect.
+     */
+    App& set_shutdown_delay(int delay_us) {
+        shutdown_delay_us_ = delay_us;
+        return *this;
+    }
+
+    /**
      * Add the kernel (Layer 2 - Foundation).
      * Must be called first, before modules and plugins.
      */
@@ -301,6 +319,8 @@ private:
     TimePoint last_frame_time_;
     std::string current_source_;
     std::string current_version_;
+    int boot_delay_us_ = 0;
+    int shutdown_delay_us_ = 0;
 };
 
 // =============================================================================

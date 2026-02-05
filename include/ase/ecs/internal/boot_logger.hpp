@@ -22,7 +22,7 @@ namespace ase::ecs::internal {
  * Boot logger configuration.
  */
 struct BootLoggerConfig {
-    int boot_delay_us = 15000;  // Visual delay per system (microseconds)
+    int boot_delay_us = 0;  // Visual delay per system (microseconds), default: 0 (fast)
     bool show_dependencies = true;
     bool show_timestamps = true;
 };

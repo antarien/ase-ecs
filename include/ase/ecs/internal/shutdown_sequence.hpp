@@ -22,7 +22,7 @@ namespace ase::ecs::internal {
  * Shutdown sequence configuration.
  */
 struct ShutdownConfig {
-    int shutdown_delay_us = 15000;  // Visual delay per system (microseconds)
+    int shutdown_delay_us = 0;  // Visual delay per system (microseconds), default: 0 (fast)
     bool show_timestamps = true;
 };
 

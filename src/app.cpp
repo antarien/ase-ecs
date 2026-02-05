@@ -41,7 +41,9 @@ void App::startup() {
     }
 
     // Print boot log and call on_start for each system
-    internal::print_boot_sequence(*system_registry_, world_);
+    internal::BootLoggerConfig boot_config;
+    boot_config.boot_delay_us = boot_delay_us_;
+    internal::print_boot_sequence(*system_registry_, world_, boot_config);
 
     // Run Initialization schedule
     run_schedule(Schedule::Initialization, 0.0f);
@@ -55,7 +57,9 @@ void App::shutdown() {
     run_schedule(Schedule::Finalization, 0.0f);
 
     // Print shutdown sequence and call on_stop for each system
-    internal::print_shutdown_sequence(*system_registry_, world_);
+    internal::ShutdownConfig shutdown_config;
+    shutdown_config.shutdown_delay_us = shutdown_delay_us_;
+    internal::print_shutdown_sequence(*system_registry_, world_, shutdown_config);
 
     running_.store(false);
 }
