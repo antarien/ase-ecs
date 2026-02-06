@@ -80,6 +80,37 @@ add_library(${PROJECT_NAME} STATIC
     src/internal/tick_scheduler.cpp
     src/internal/boot_logger.cpp
     src/internal/shutdown_sequence.cpp
+
+    #[[
+    HEADERS - CORE
+    Core ECS framework headers: App, System, Schedule, Types.
+    ]]
+    include/ase/ecs/app.hpp
+    include/ase/ecs/system.hpp
+    include/ase/ecs/schedule.hpp
+
+    #[[
+    HEADERS - INTERNAL
+    Internal implementation headers for App decomposition.
+    ]]
+    include/ase/ecs/internal/boot_logger.hpp
+    include/ase/ecs/internal/dependency_sorter.hpp
+    include/ase/ecs/internal/shutdown_sequence.hpp
+    include/ase/ecs/internal/system_registry.hpp
+    include/ase/ecs/internal/terminal_utils.hpp
+    include/ase/ecs/internal/tick_scheduler.hpp
+
+    #[[
+    HEADERS - COMPONENTS - APP
+    App state components for rates and timing.
+    ]]
+    include/ase/ecs/components/app/state/ecs_app_state_rates_component.hpp
+
+    #[[
+    HEADERS - COMPONENTS - BOOTSTRAP
+    Bootstrap components for spawn requests and initialization.
+    ]]
+    include/ase/ecs/components/bootstrap/state/ecs_bootstrap_state_spawn_request_component.hpp
 )
 add_library(ase::ecs ALIAS ${PROJECT_NAME})
 
