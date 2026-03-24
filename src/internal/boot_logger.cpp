@@ -209,7 +209,7 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
             // Empty line between module groups
             if (!prev_source.empty() && prev_source != info->source) {
                 size_t curr_module_count = module_counts[info->source];
-                if (prev_module_count > 1 || curr_module_count > 1) {
+                if (prev_module_count > 1 or curr_module_count > 1) {
                     std::cout << "  " << sched_color << "│" << ansi::RESET << "\n" << std::flush;
                 }
             }
@@ -261,36 +261,9 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
                 line_content << ansi::YELLOW << "[!]" << ansi::RESET << " ";
             }
 
-            // Build suffix with system name and dependencies
-            std::ostringstream line_suffix;
-            line_suffix << ansi::WHITE << info->name << ansi::RESET;
-
-            if (config.show_dependencies && !info->run_after.empty()) {
-                int term_width = get_terminal_width();
-                size_t prefix_width = 4 + 13 + 7 + 10 + 5 + info->source.size() + 3 + info->name.size() + 4;
-                size_t max_deps_width = (term_width > static_cast<int>(prefix_width + 10))
-                    ? static_cast<size_t>(term_width) - prefix_width
-                    : 40;
-
-                std::string deps_str;
-                size_t shown_count = 0;
-                for (size_t i = 0; i < info->run_after.size(); ++i) {
-                    std::string next = (i > 0 ? ", " : "") + info->run_after[i];
-                    if (deps_str.size() + next.size() > max_deps_width - 12) {
-                        size_t remaining = info->run_after.size() - shown_count;
-                        if (remaining > 0) {
-                            deps_str += " (+" + std::to_string(remaining) + " more)";
-                        }
-                        break;
-                    }
-                    deps_str += next;
-                    shown_count++;
-                }
-                line_suffix << ansi::DIM << " → " << deps_str << ansi::RESET;
-            }
-
             // Print [..] before on_start
-            std::cout << line_content.str() << ansi::YELLOW << "[..]" << ansi::RESET << " " << line_suffix.str() << std::flush;
+            std::cout << line_content.str() << ansi::YELLOW << "[..]" << ansi::RESET << " "
+                      << ansi::WHITE << info->name << ansi::RESET << std::flush;
 
             // Call on_start
             auto* system = name_to_system[info->name];
@@ -298,7 +271,7 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
                 system->on_start(world.registry());
 
                 // Replace sinks after LogSystem starts
-                if (!sinks_replaced && log::LogSystem::logger()) {
+                if (!sinks_replaced and log::LogSystem::logger()) {
                     original_sinks = log::LogSystem::logger()->sinks();
                     log::LogSystem::logger()->sinks().clear();
                     log::LogSystem::logger()->sinks().push_back(queue_sink);
@@ -307,7 +280,19 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
             }
 
             // Overwrite with [OK]
-            std::cout << "\r\x1b[K" << line_content.str() << ansi::OK_GREEN << "[OK]" << ansi::RESET << " " << line_suffix.str() << "\n" << std::flush;
+            std::cout << "\r\x1b[K" << line_content.str() << ansi::OK_GREEN << "[OK]" << ansi::RESET << " "
+                      << ansi::WHITE << info->name << ansi::RESET << "\n" << std::flush;
+
+            // Dependencies on separate sub-line (all listed, no truncation)
+            if (config.show_dependencies and !info->run_after.empty()) {
+                std::cout << "  " << sched_color << "│" << ansi::RESET << "   "
+                          << ansi::DIM << "→ ";
+                for (size_t i = 0; i < info->run_after.size(); ++i) {
+                    if (i > 0) std::cout << ", ";
+                    std::cout << info->run_after[i];
+                }
+                std::cout << ansi::RESET << "\n" << std::flush;
+            }
         }
     }
 
