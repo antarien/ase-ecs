@@ -9,7 +9,7 @@ Part of [ASE - Antares Simulation Engine](../../..)
 
 ## Overview
 
-`ase-ecs` is the foundational ECS (Entity Component System) module for ASE. It provides a thin wrapper around the [EnTT](https://github.com/skypjack/entt) library with a Bevy-inspired application builder and named schedule system for organizing game logic execution.
+`ase-ecs` is the foundational ECS (Entity Component System) module for ASE, providing a thin wrapper around the [EnTT](https://github.com/skypjack/entt) library with a Bevy-inspired application builder and custom named schedule system for organizing game logic execution. The App builder provides the top-level registration API where modules and plugins register their systems into named schedules using add_system() and add_system_with() for ordering constraints. The schedule system implements 66 named schedules organized into 21 tiers (Initialization, Dynamics, Replication, Persistence, etc.) with configurable tick rates per tier — this is a custom ASE design, NOT Bevy's schedule system (Bevy schedule names like Startup, Update, PostUpdate are explicitly forbidden). The System base class defines the contract all game systems implement: name(), on_start(), tick(), and on_stop() with the critical constraint that systems must be stateless (no member variables). The Registry type wraps EnTT's entt::registry providing entity creation, component emplacement, and view-based iteration. Every module from Layer 1 through Layer 4 depends on ase-ecs as the universal data model.
 
 ## Features
 

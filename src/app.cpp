@@ -53,6 +53,12 @@ void App::startup() {
 }
 
 void App::shutdown() {
+    // Invoke destroy callback (port of setOnDestroyCallback)
+    if (on_destroy_callback_) {
+        on_destroy_callback_();
+        on_destroy_callback_ = nullptr;
+    }
+
     // Run Finalization schedule
     run_schedule(Schedule::Finalization, 0.0f);
 
@@ -62,6 +68,22 @@ void App::shutdown() {
     internal::print_shutdown_sequence(*system_registry_, world_, shutdown_config);
 
     running_.store(false);
+}
+
+// =============================================================================
+// Introspection API (port of systemRegistry.ts)
+// =============================================================================
+
+size_t App::system_count() const {
+    return system_registry_->total_count();
+}
+
+const std::vector<internal::SystemInfo>& App::system_infos() const {
+    return system_registry_->infos();
+}
+
+const std::vector<std::unique_ptr<System>>& App::systems_for(Schedule schedule) const {
+    return system_registry_->systems_for(schedule);
 }
 
 void App::tick(float dt) {

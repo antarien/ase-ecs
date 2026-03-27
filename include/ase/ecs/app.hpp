@@ -13,6 +13,7 @@
 
 #include "schedule.hpp"
 #include "system.hpp"
+#include "internal/system_registry.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -308,6 +309,22 @@ public:
     Registry& registry() { return world_.registry(); }
     const Registry& registry() const { return world_.registry(); }
 
+    // =========================================================================
+    // Introspection API (port of systemRegistry.ts getSystemCount/getAllSystems)
+    // =========================================================================
+
+    /** Total number of registered systems across all schedules */
+    size_t system_count() const;
+
+    /** Get all system metadata (name, source, schedule, run_after) */
+    const std::vector<internal::SystemInfo>& system_infos() const;
+
+    /** Get systems for a specific schedule */
+    const std::vector<std::unique_ptr<System>>& systems_for(Schedule schedule) const;
+
+    /** Set callback invoked during shutdown (port of setOnDestroyCallback) */
+    void set_on_destroy(void(*callback)()) { on_destroy_callback_ = callback; }
+
 private:
     World world_;
 
@@ -321,6 +338,7 @@ private:
     std::string current_version_;
     int boot_delay_us_ = 0;
     int shutdown_delay_us_ = 0;
+    void(*on_destroy_callback_)() = nullptr;
 };
 
 // =============================================================================
