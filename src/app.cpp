@@ -45,8 +45,9 @@ void App::startup() {
     boot_config.boot_delay_us = boot_delay_us_;
     internal::print_boot_sequence(*system_registry_, world_, boot_config);
 
-    // Run Initialization schedule
+    // Run Lifecycle schedules (Initialization → Configuration)
     run_schedule(Schedule::Initialization, 0.0f);
+    run_schedule(Schedule::Configuration, 0.0f);
 
     running_.store(true);
     last_frame_time_ = Clock::now();
