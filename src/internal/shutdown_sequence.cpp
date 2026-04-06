@@ -1,6 +1,7 @@
 #include <ase/ecs/internal/shutdown_sequence.hpp>
 #include <ase/ecs/internal/terminal_utils.hpp>
 #include <ase/log/log.hpp>
+#include <ase/log/log_module.hpp>
 #include <ase/log/colors.hpp>
 
 #include <spdlog/sinks/base_sink.h>
@@ -184,7 +185,7 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
 
             std::cout << ansi::DIM << "[" << full_timestamp() << "]" << ansi::RESET << " "
                       << "[" << LEVEL_COLORS[idx] << LEVEL_NAMES[idx] << ansi::RESET << "] "
-                      << "[ASE] [SERVER] " << entry.payload << "\n";
+                      << "[ASE] [" << (world.registry().ctx().contains<ase::log::LogConfig>() ? world.registry().ctx().get<ase::log::LogConfig>().label : "SERVER") << "] " << entry.payload << "\n";
         }
         std::cout << std::flush;
     }
