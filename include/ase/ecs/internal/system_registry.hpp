@@ -45,6 +45,8 @@ struct PendingEntry {
     System* system = nullptr;
     std::string name;
     Schedule schedule = Schedule::Integration;
+    SystemInfo info;
+    std::unique_ptr<System> owned_system;
 };
 
 // =============================================================================
@@ -70,6 +72,13 @@ public:
     void add_system(Schedule schedule, std::unique_ptr<System> system,
                     std::string name, std::string source, std::string version,
                     std::vector<std::string> run_after, int priority);
+
+    /**
+     * Add a deferred system to the main lists (called after boot completes).
+     * Used by boot_pending_systems to safely insert late-registered systems.
+     */
+    void add_deferred(Schedule schedule, std::unique_ptr<System> system,
+                      const SystemInfo& info);
 
     /**
      * Get all systems for a schedule.

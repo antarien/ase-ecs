@@ -16,7 +16,16 @@ void SystemRegistry::add_system(Schedule schedule, std::unique_ptr<System> syste
         .priority = priority
     };
 
-    // Persistent O(1) lookup maps
+    // Late-System-Registration: if boot is in progress, ONLY queue — do NOT
+    // modify main lists (iterator invalidation in print_boot_sequence → SEGV).
+    // boot_pending_systems() will add them to the main lists after boot completes.
+    if (boot_started_) {
+        pending_.push_back({sys_ptr, std::move(name), schedule,
+                            std::move(info), std::move(system)});
+        return;
+    }
+
+    // Normal registration (before boot)
     name_to_system_[name] = sys_ptr;
     size_t info_index = system_infos_.size();
     name_to_index_[name] = info_index;
@@ -27,11 +36,21 @@ void SystemRegistry::add_system(Schedule schedule, std::unique_ptr<System> syste
     schedule_systems_[schedule].push_back(std::move(system));
     schedule_info_indices_[schedule].push_back(info_index);
     ++schedule_source_counts_[schedule][source];
+}
 
-    // Late-System-Registration: queue if boot already started
-    if (boot_started_) {
-        pending_.push_back({sys_ptr, std::move(name), schedule});
-    }
+void SystemRegistry::add_deferred(Schedule schedule, std::unique_ptr<System> system,
+                                   const SystemInfo& info) {
+    auto* sys_ptr = system.get();
+    name_to_system_[info.name] = sys_ptr;
+    size_t info_index = system_infos_.size();
+    name_to_index_[info.name] = info_index;
+    ++source_totals_[info.source];
+    ++total_count_;
+
+    system_infos_.push_back(info);
+    schedule_systems_[schedule].push_back(std::move(system));
+    schedule_info_indices_[schedule].push_back(info_index);
+    ++schedule_source_counts_[schedule][info.source];
 }
 
 std::vector<std::unique_ptr<System>>& SystemRegistry::systems_for(Schedule schedule) {

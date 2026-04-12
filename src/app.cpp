@@ -1,4 +1,5 @@
 #include <ase/ecs/app.hpp>
+#include <ase/log/log.hpp>
 #include <ase/ecs/internal/boot_logger.hpp>
 #include <ase/ecs/internal/dependency_sorter.hpp>
 #include <ase/ecs/internal/shutdown_sequence.hpp>
@@ -49,15 +50,13 @@ void App::startup() {
     internal::print_boot_sequence(*system_registry_, world_, boot_config);
 
     // Late-System-Registration: if on_start() added new systems (e.g., dlopen modules),
-    // re-sort and boot the pending systems before running lifecycle schedules
+    // re-sort and boot the pending systems. Their on_start() runs in boot_pending_systems.
+    // No separate run_schedule(Initialization/Configuration) needed — all systems already
+    // ran on_start() during print_boot_sequence + boot_pending_systems.
     if (system_registry_->has_pending()) {
         internal::sort_systems_by_dependencies(*system_registry_);
         internal::boot_pending_systems(*system_registry_, world_, boot_config);
     }
-
-    // Run Lifecycle schedules (Initialization → Configuration)
-    run_schedule(Schedule::Initialization, 0.0f);
-    run_schedule(Schedule::Configuration, 0.0f);
 
     running_.store(true);
     last_frame_time_ = Clock::now();
@@ -123,6 +122,7 @@ void App::run_schedule(Schedule schedule, float dt) {
     auto& systems = system_registry_->systems_for(schedule);
     for (auto& system : systems) {
         if (system && system->enabled()) {
+            log::debug("[App::run_schedule] tick: {}", system->name());
             system->tick(world_.registry(), dt);
         }
     }

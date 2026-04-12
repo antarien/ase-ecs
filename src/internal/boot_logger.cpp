@@ -300,14 +300,18 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
 
 void boot_pending_systems(SystemRegistry& registry, World& world,
                           const BootLoggerConfig& /*config*/) {
-    // Drain pending names into a set for O(1) membership check
+    // Drain pending entries and register them into main lists
+    // (deferred during boot to prevent iterator invalidation in print_boot_sequence)
     auto pending = registry.drain_pending();
     if (pending.empty()) { return; }
 
     std::unordered_set<std::string> pending_names;
     pending_names.reserve(pending.size());
     for (auto& entry : pending) {
-        pending_names.insert(std::move(entry.name));
+        pending_names.insert(entry.name);
+        // Now safe to add to main lists (boot iteration is done)
+        registry.add_deferred(entry.schedule, std::move(entry.owned_system),
+                              entry.info);
     }
 
     size_t total = registry.total_count();
@@ -320,6 +324,20 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
               << ansi::DIM << "(" << pending_count << " systems from dlopen modules)"
               << ansi::RESET << "\n";
     std::cout << ansi::DIM << line << ansi::RESET << "\n" << std::flush;
+
+    // Queue sink: capture spdlog output during on_start so it doesn't break [..]→[OK] lines
+    auto queue_sink = std::make_shared<QueueSinkMt>();
+    std::vector<spdlog::sink_ptr> original_sinks;
+    bool sinks_replaced = false;
+    if (log::LogSystem::logger()) {
+        original_sinks = log::LogSystem::logger()->sinks();
+        log::LogSystem::logger()->sinks().clear();
+        log::LogSystem::logger()->sinks().push_back(queue_sink);
+        sinks_replaced = true;
+    }
+
+    // Track per-source counters (same pattern as print_boot_sequence)
+    std::unordered_map<std::string, size_t> source_current_idx;
 
     // Walk schedule_systems_ in SCHEDULE_ORDER (dependency-sorted order).
     // Only call on_start() for systems whose name is in the pending set.
@@ -334,21 +352,47 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
             if (it == pending_names.end()) { continue; }
 
             const SystemInfo* info = registry.find_info(system->name());
-            const char* source = info ? info->source.c_str() : "unknown";
+            const std::string& source = info ? info->source : std::string("unknown");
+
+            ++booted;
+            source_current_idx[source]++;
+            size_t module_idx = source_current_idx[source];
+            size_t module_total = registry.source_total(source);
+            int mod_color = log::get_module_color_code(source);
+
+            // Build line (same format as print_boot_sequence)
+            std::ostringstream line_content;
+            line_content << "  " << ansi::DIM << "│" << ansi::RESET << " "
+                         << ansi::DIM << "[" << short_timestamp() << "]" << ansi::RESET << " "
+                         << ansi::DIM << "[Boot]" << ansi::RESET << " "
+                         << ansi::CYAN << "["
+                         << std::setfill('0') << std::setw(3) << module_idx << "/"
+                         << std::setfill('0') << std::setw(3) << module_total << "]"
+                         << ansi::RESET << " "
+                         << ansi::DIM << "["
+                         << std::setfill('0') << std::setw(3) << (total - pending_count + booted) << "/"
+                         << std::setfill('0') << std::setw(3) << total << "]"
+                         << ansi::RESET << " "
+                         << "\x1b[38;5;" << mod_color << "m[" << source << "]" << ansi::RESET << " ";
+
+            if (info && !info->version.empty()) {
+                line_content << ansi::DIM << "[" << info->version << "]" << ansi::RESET << " ";
+            } else {
+                line_content << ansi::YELLOW << "[!]" << ansi::RESET << " ";
+            }
+
+            // Print [..] spinner before on_start
+            std::cout << line_content.str() << ansi::YELLOW << "[..]" << ansi::RESET << " "
+                      << ansi::WHITE << system->name() << ansi::RESET << std::flush;
 
             auto start = std::chrono::steady_clock::now();
             system->on_start(world.registry());
             auto elapsed = std::chrono::steady_clock::now() - start;
             auto us = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
 
-            ++booted;
-            std::cout << "  " << ansi::DIM << "│" << ansi::RESET
-                      << " [Boot] "
-                      << "[" << std::setfill('0') << std::setw(3) << (total - pending_count + booted)
-                      << "/" << std::setfill('0') << std::setw(3) << total << "] "
-                      << "[" << source << "] "
-                      << ansi::GREEN << "[OK]" << ansi::RESET << " "
-                      << system->name();
+            // Overwrite with [OK]
+            std::cout << "\r\x1b[K" << line_content.str() << ansi::OK_GREEN << "[OK]" << ansi::RESET << " "
+                      << ansi::WHITE << system->name() << ansi::RESET;
 
             if (us > 100) {
                 std::cout << ansi::DIM << " (" << (us / 1000.0) << "ms)" << ansi::RESET;
@@ -363,7 +407,21 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
         if (pending_names.empty()) { break; }
     }
 
+    // Footer
     std::cout << ansi::DIM << line << ansi::RESET << "\n\n" << std::flush;
+
+    // Restore original sinks and replay queued logs
+    if (sinks_replaced && log::LogSystem::logger()) {
+        log::LogSystem::logger()->sinks().clear();
+        for (auto& sink : original_sinks) {
+            log::LogSystem::logger()->sinks().push_back(sink);
+        }
+    }
+    if (log::LogSystem::logger()) {
+        for (const auto& entry : queue_sink->entries()) {
+            log::LogSystem::logger()->log(entry.level, "{}", entry.payload);
+        }
+    }
 }
 
 }  // namespace ase::ecs::internal
