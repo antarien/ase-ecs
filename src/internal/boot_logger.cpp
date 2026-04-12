@@ -281,7 +281,9 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
 
     // Footer
     std::cout << "\n" << std::flush;
-    std::cout << ansi::DIM << line << ansi::RESET << "\n\n" << std::flush;
+    if (!registry.has_pending()) {
+        std::cout << ansi::DIM << line << ansi::RESET << "\n\n" << std::flush;
+    }
 
     // Restore original sinks
     if (sinks_replaced && log::LogSystem::logger()) {
@@ -339,95 +341,107 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
     // Track per-source counters (same pattern as print_boot_sequence)
     std::unordered_map<std::string, size_t> source_current_idx;
 
-    Schedule prev_schedule = static_cast<Schedule>(-1);
+    // Boot helper: boot all pending systems matching layer filter
+    auto boot_layer = [&](bool plugins_only, const char* section_label, size_t section_count) {
+        std::cout << "\n" << ansi::DIM << line << ansi::RESET << "\n";
+        std::cout << "  " << section_label << " "
+                  << ansi::DIM << "(" << section_count << ")"
+                  << ansi::RESET << "\n";
+        std::cout << ansi::DIM << line << ansi::RESET << "\n\n" << std::flush;
 
-    // Walk schedule_systems_ in SCHEDULE_ORDER (dependency-sorted order).
-    // Only call on_start() for systems whose name is in the pending set.
-    for (size_t sched_idx = 0; sched_idx < SCHEDULE_ORDER_COUNT; ++sched_idx) {
-        Schedule schedule = SCHEDULE_ORDER[sched_idx];
-        auto& systems = registry.systems_for(schedule);
-        bool header_printed = false;
-        const char* sched_color = tier_color(schedule_tier(schedule));
+        Schedule prev_schedule = static_cast<Schedule>(-1);
 
-        for (auto& system : systems) {
-            if (!system) { continue; }
+        for (size_t sched_idx = 0; sched_idx < SCHEDULE_ORDER_COUNT; ++sched_idx) {
+            Schedule schedule = SCHEDULE_ORDER[sched_idx];
+            auto& systems = registry.systems_for(schedule);
+            bool header_printed = false;
+            const char* sched_color = tier_color(schedule_tier(schedule));
 
-            auto it = pending_names.find(system->name());
-            if (it == pending_names.end()) { continue; }
+            for (auto& system : systems) {
+                if (!system) { continue; }
 
-            // Schedule header (same as print_boot_sequence)
-            if (!header_printed) {
-                std::string metrics = format_metrics(schedule);
+                auto it = pending_names.find(system->name());
+                if (it == pending_names.end()) { continue; }
 
-                if (prev_schedule != static_cast<Schedule>(-1)) {
-                    std::cout << "\n";
+                const SystemInfo* info = registry.find_info(system->name());
+                const std::string& source = info ? info->source : std::string("unknown");
+
+                // Layer filter: ase-pl-* = plugin, everything else = module
+                bool is_plugin = (source.size() > 6 && source.substr(0, 6) == "ase-pl");
+                if (is_plugin != plugins_only) { continue; }
+
+                // Schedule header
+                if (!header_printed) {
+                    std::string metrics = format_metrics(schedule);
+                    if (prev_schedule != static_cast<Schedule>(-1)) {
+                        std::cout << "\n";
+                    }
+                    std::cout << "  " << sched_color << "┌─ "
+                              << schedule_name(schedule) << ansi::RESET;
+                    if (!metrics.empty()) {
+                        std::cout << " " << ansi::DIM << "(" << metrics << ")" << ansi::RESET;
+                    }
+                    std::cout << "\n" << std::flush;
+                    header_printed = true;
+                    prev_schedule = schedule;
                 }
-                std::cout << "  " << sched_color << "┌─ "
-                          << schedule_name(schedule) << ansi::RESET;
-                if (!metrics.empty()) {
-                    std::cout << " " << ansi::DIM << "(" << metrics << ")" << ansi::RESET;
+
+                ++booted;
+                source_current_idx[source]++;
+                size_t module_idx = source_current_idx[source];
+                size_t module_total = registry.source_total(source);
+                int mod_color = log::get_module_color_code(source);
+
+                std::ostringstream line_content;
+                line_content << "  " << sched_color << "│" << ansi::RESET << " "
+                             << ansi::DIM << "[" << short_timestamp() << "]" << ansi::RESET << " "
+                             << ansi::DIM << "[Boot]" << ansi::RESET << " "
+                             << ansi::CYAN << "["
+                             << std::setfill('0') << std::setw(3) << module_idx << "/"
+                             << std::setfill('0') << std::setw(3) << module_total << "]"
+                             << ansi::RESET << " "
+                             << ansi::DIM << "["
+                             << std::setfill('0') << std::setw(3) << (total - pending_count + booted) << "/"
+                             << std::setfill('0') << std::setw(3) << total << "]"
+                             << ansi::RESET << " ";
+
+                if (info && !info->version.empty()) {
+                    line_content << ansi::DIM << "[" << info->version << "]" << ansi::RESET << " ";
+                } else {
+                    line_content << ansi::YELLOW << "[!]" << ansi::RESET << " ";
+                }
+
+                std::cout << line_content.str() << ansi::YELLOW << "[..]" << ansi::RESET << " "
+                          << "\x1b[38;5;" << mod_color << "m[" << source << "]" << ansi::RESET << " "
+                          << ansi::WHITE << system->name() << ansi::RESET << std::flush;
+
+                auto start = std::chrono::steady_clock::now();
+                system->on_start(world.registry());
+                auto elapsed = std::chrono::steady_clock::now() - start;
+                auto us = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
+
+                std::cout << "\r\x1b[K" << line_content.str() << ansi::OK_GREEN << "[OK]" << ansi::RESET << " "
+                          << "\x1b[38;5;" << mod_color << "m[" << source << "]" << ansi::RESET << " "
+                          << ansi::WHITE << system->name() << ansi::RESET;
+
+                if (us > 100) {
+                    std::cout << ansi::DIM << " (" << (us / 1000.0) << "ms)" << ansi::RESET;
                 }
                 std::cout << "\n" << std::flush;
-                header_printed = true;
-                prev_schedule = schedule;
+
+                pending_names.erase(it);
             }
-
-            const SystemInfo* info = registry.find_info(system->name());
-            const std::string& source = info ? info->source : std::string("unknown");
-
-            ++booted;
-            source_current_idx[source]++;
-            size_t module_idx = source_current_idx[source];
-            size_t module_total = registry.source_total(source);
-            int mod_color = log::get_module_color_code(source);
-
-            // Build line (same format as print_boot_sequence)
-            std::ostringstream line_content;
-            line_content << "  " << sched_color << "│" << ansi::RESET << " "
-                         << ansi::DIM << "[" << short_timestamp() << "]" << ansi::RESET << " "
-                         << ansi::DIM << "[Boot]" << ansi::RESET << " "
-                         << ansi::CYAN << "["
-                         << std::setfill('0') << std::setw(3) << module_idx << "/"
-                         << std::setfill('0') << std::setw(3) << module_total << "]"
-                         << ansi::RESET << " "
-                         << ansi::DIM << "["
-                         << std::setfill('0') << std::setw(3) << (total - pending_count + booted) << "/"
-                         << std::setfill('0') << std::setw(3) << total << "]"
-                         << ansi::RESET << " ";
-
-            // Version before OK/status
-            if (info && !info->version.empty()) {
-                line_content << ansi::DIM << "[" << info->version << "]" << ansi::RESET << " ";
-            } else {
-                line_content << ansi::YELLOW << "[!]" << ansi::RESET << " ";
-            }
-
-            // Print [..] [source] SystemName
-            std::cout << line_content.str() << ansi::YELLOW << "[..]" << ansi::RESET << " "
-                      << "\x1b[38;5;" << mod_color << "m[" << source << "]" << ansi::RESET << " "
-                      << ansi::WHITE << system->name() << ansi::RESET << std::flush;
-
-            auto start = std::chrono::steady_clock::now();
-            system->on_start(world.registry());
-            auto elapsed = std::chrono::steady_clock::now() - start;
-            auto us = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
-
-            // Overwrite with [OK] [source] SystemName
-            std::cout << "\r\x1b[K" << line_content.str() << ansi::OK_GREEN << "[OK]" << ansi::RESET << " "
-                      << "\x1b[38;5;" << mod_color << "m[" << source << "]" << ansi::RESET << " "
-                      << ansi::WHITE << system->name() << ansi::RESET;
-
-            if (us > 100) {
-                std::cout << ansi::DIM << " (" << (us / 1000.0) << "ms)" << ansi::RESET;
-            }
-
-            std::cout << "\n" << std::flush;
-
-            pending_names.erase(it);
-            if (pending_names.empty()) { break; }
         }
+    };
 
-        if (pending_names.empty()) { break; }
+    // Phase 1: L3 Modules (critical infrastructure)
+    if (l3_count > 0) {
+        boot_layer(false, "L3 Modules", l3_count);
+    }
+
+    // Phase 2: L4 Plugins (optional, depends on L3)
+    if (l4_count > 0) {
+        boot_layer(true, "L4 Plugins", l4_count);
     }
 
     // Footer
