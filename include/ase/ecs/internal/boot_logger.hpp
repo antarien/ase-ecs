@@ -46,4 +46,16 @@ struct BootLoggerConfig {
 void print_boot_sequence(SystemRegistry& registry, World& world,
                          const BootLoggerConfig& config = {});
 
+/**
+ * Boot only systems that were added after the initial boot pass.
+ * Called by App::startup() when has_pending() is true (Late-System-Registration).
+ * Calls on_start() on each pending system and logs them in the same boot format.
+ *
+ * @param registry System registry (systems added during on_start of initial pass)
+ * @param world World for on_start calls
+ * @param config Logger configuration
+ */
+void boot_pending_systems(SystemRegistry& registry, World& world,
+                          const BootLoggerConfig& config = {});
+
 }  // namespace ase::ecs::internal

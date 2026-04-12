@@ -40,10 +40,20 @@ void App::startup() {
         }
     }
 
+    // Mark boot started — systems added after this point are queued as pending
+    system_registry_->mark_boot_started();
+
     // Print boot log and call on_start for each system
     internal::BootLoggerConfig boot_config;
     boot_config.boot_delay_us = boot_delay_us_;
     internal::print_boot_sequence(*system_registry_, world_, boot_config);
+
+    // Late-System-Registration: if on_start() added new systems (e.g., dlopen modules),
+    // re-sort and boot the pending systems before running lifecycle schedules
+    if (system_registry_->has_pending()) {
+        internal::sort_systems_by_dependencies(*system_registry_);
+        internal::boot_pending_systems(*system_registry_, world_, boot_config);
+    }
 
     // Run Lifecycle schedules (Initialization → Configuration)
     run_schedule(Schedule::Initialization, 0.0f);

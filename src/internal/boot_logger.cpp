@@ -11,6 +11,7 @@
 #include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace ase::ecs::internal {
@@ -139,15 +140,9 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
     size_t current_system = 0;
     std::string line = terminal_line();
 
-    // Build name → system mapping for on_start calls
-    std::unordered_map<std::string, System*> name_to_system;
-    for (auto& [schedule, systems] : registry.all_systems()) {
-        for (auto& system : systems) {
-            if (system) {
-                name_to_system[system->name()] = system.get();
-            }
-        }
-    }
+    // O(1) lookups via persistent maps in SystemRegistry (no temp-maps!)
+    // name_to_system: registry.find_system(name)
+    // source_totals:  registry.source_total(source)
 
     // Create queue sink to capture logs during boot
     auto queue_sink = std::make_shared<QueueSinkMt>();
@@ -160,26 +155,18 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
     std::cout << "  ASE Schedule Bootstrap " << ansi::DIM << "(" << total_systems << " systems)" << ansi::RESET << "\n" << std::flush;
     std::cout << ansi::DIM << line << ansi::RESET << "\n" << std::flush;
 
-    // Pre-calculate GLOBAL source totals (total systems per module/plugin)
-    std::unordered_map<std::string, size_t> global_source_totals;
-    for (const auto& info : registry.infos()) {
-        global_source_totals[info.source]++;
-    }
-
     // Track current index per source (for module-local counter)
     std::unordered_map<std::string, size_t> source_current_idx;
 
-    // Group system infos by schedule
-    std::unordered_map<Schedule, std::vector<const SystemInfo*>> grouped;
-    for (const auto& info : registry.infos()) {
-        grouped[info.schedule].push_back(&info);
-    }
+    // Use persistent schedule_info_indices_ from SystemRegistry (no temp-map!)
+    const auto& by_schedule = registry.infos_by_schedule();
+    const auto& all_infos = registry.infos();
 
     // Process schedules in order
     for (size_t sched_idx = 0; sched_idx < SCHEDULE_ORDER_COUNT; ++sched_idx) {
         Schedule schedule = SCHEDULE_ORDER[sched_idx];
-        auto it = grouped.find(schedule);
-        if (it == grouped.end() || it->second.empty()) {
+        auto it = by_schedule.find(schedule);
+        if (it == by_schedule.end() || it->second.empty()) {
             continue;
         }
 
@@ -196,26 +183,21 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
         }
         std::cout << "\n" << std::flush;
 
-        // Count systems per module
-        std::unordered_map<std::string, size_t> module_counts;
-        for (const auto* info_ptr : it->second) {
-            module_counts[info_ptr->source]++;
-        }
-
         std::string prev_source;
         size_t prev_module_count = 0;
 
-        for (const auto* info : it->second) {
+        for (size_t idx : it->second) {
+            const auto* info = &all_infos[idx];
             // Empty line between module groups
             if (!prev_source.empty() && prev_source != info->source) {
-                size_t curr_module_count = module_counts[info->source];
+                size_t curr_module_count = registry.schedule_source_count(schedule, info->source);
                 if (prev_module_count > 1 or curr_module_count > 1) {
                     std::cout << "  " << sched_color << "│" << ansi::RESET << "\n" << std::flush;
                 }
             }
 
             if (prev_source != info->source) {
-                prev_module_count = module_counts[info->source];
+                prev_module_count = registry.schedule_source_count(schedule, info->source);
             }
             prev_source = info->source;
 
@@ -224,7 +206,7 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
             // Increment and get module-local index
             source_current_idx[info->source]++;
             size_t module_idx = source_current_idx[info->source];
-            size_t module_total = global_source_totals[info->source];
+            size_t module_total = registry.source_total(info->source);
 
             // Boot delay
             if (config.boot_delay_us > 0) {
@@ -266,7 +248,7 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
                       << ansi::WHITE << info->name << ansi::RESET << std::flush;
 
             // Call on_start
-            auto* system = name_to_system[info->name];
+            auto* system = registry.find_system(info->name);
             if (system) {
                 system->on_start(world.registry());
 
@@ -314,6 +296,74 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
             log::LogSystem::logger()->log(entry.level, "{}", entry.payload);
         }
     }
+}
+
+void boot_pending_systems(SystemRegistry& registry, World& world,
+                          const BootLoggerConfig& /*config*/) {
+    // Drain pending names into a set for O(1) membership check
+    auto pending = registry.drain_pending();
+    if (pending.empty()) { return; }
+
+    std::unordered_set<std::string> pending_names;
+    pending_names.reserve(pending.size());
+    for (auto& entry : pending) {
+        pending_names.insert(std::move(entry.name));
+    }
+
+    size_t total = registry.total_count();
+    size_t pending_count = pending_names.size();
+    size_t booted = 0;
+
+    std::string line = terminal_line();
+    std::cout << "\n" << ansi::DIM << line << ansi::RESET << "\n";
+    std::cout << "  Late-System-Registration "
+              << ansi::DIM << "(" << pending_count << " systems from dlopen modules)"
+              << ansi::RESET << "\n";
+    std::cout << ansi::DIM << line << ansi::RESET << "\n" << std::flush;
+
+    // Walk schedule_systems_ in SCHEDULE_ORDER (dependency-sorted order).
+    // Only call on_start() for systems whose name is in the pending set.
+    for (size_t sched_idx = 0; sched_idx < SCHEDULE_ORDER_COUNT; ++sched_idx) {
+        Schedule schedule = SCHEDULE_ORDER[sched_idx];
+        auto& systems = registry.systems_for(schedule);
+
+        for (auto& system : systems) {
+            if (!system) { continue; }
+
+            auto it = pending_names.find(system->name());
+            if (it == pending_names.end()) { continue; }
+
+            const SystemInfo* info = registry.find_info(system->name());
+            const char* source = info ? info->source.c_str() : "unknown";
+
+            auto start = std::chrono::steady_clock::now();
+            system->on_start(world.registry());
+            auto elapsed = std::chrono::steady_clock::now() - start;
+            auto us = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
+
+            ++booted;
+            std::cout << "  " << ansi::DIM << "│" << ansi::RESET
+                      << " [Boot] "
+                      << "[" << std::setfill('0') << std::setw(3) << (total - pending_count + booted)
+                      << "/" << std::setfill('0') << std::setw(3) << total << "] "
+                      << "[" << source << "] "
+                      << ansi::GREEN << "[OK]" << ansi::RESET << " "
+                      << system->name();
+
+            if (us > 100) {
+                std::cout << ansi::DIM << " (" << (us / 1000.0) << "ms)" << ansi::RESET;
+            }
+
+            std::cout << "\n" << std::flush;
+
+            pending_names.erase(it);
+            if (pending_names.empty()) { break; }
+        }
+
+        if (pending_names.empty()) { break; }
+    }
+
+    std::cout << ansi::DIM << line << ansi::RESET << "\n\n" << std::flush;
 }
 
 }  // namespace ase::ecs::internal

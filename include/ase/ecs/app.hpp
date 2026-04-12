@@ -325,6 +325,9 @@ public:
     /** Set callback invoked during shutdown (port of setOnDestroyCallback) */
     void set_on_destroy(void(*callback)()) { on_destroy_callback_ = callback; }
 
+    /** Access SystemRegistry for Hot-Reload (remove_systems_by_source) */
+    internal::SystemRegistry& system_registry() { return *system_registry_; }
+
 private:
     World world_;
 

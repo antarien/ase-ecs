@@ -31,7 +31,7 @@ Part of [ASE - Antares Simulation Engine](../../..)
 ### CMake Integration
 
 ```cmake
-add_subdirectory(core/core/ase-ecs)
+add_subdirectory(core/ase-ecs)
 target_link_libraries(your_target PRIVATE ase-ecs)
 ```
 
