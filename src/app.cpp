@@ -122,7 +122,6 @@ void App::run_schedule(Schedule schedule, float dt) {
     auto& systems = system_registry_->systems_for(schedule);
     for (auto& system : systems) {
         if (system && system->enabled()) {
-            log::debug("[App::run_schedule] tick: {}", system->name());
             system->tick(world_.registry(), dt);
         }
     }

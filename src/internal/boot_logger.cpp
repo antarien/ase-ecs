@@ -4,6 +4,7 @@
 #include <ase/log/colors.hpp>
 
 #include <spdlog/sinks/base_sink.h>
+#include <spdlog/sinks/ansicolor_sink.h>
 #include <iomanip>
 #include <iostream>
 #include <mutex>
@@ -293,8 +294,25 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
         }
     }
 
-    // Queued on_start logs are intentionally DISCARDED — the boot sequence
-    // already shows [OK] for each system. Replaying "Started" logs is redundant.
+    // Replay queued logs to FILE sinks only (not console — boot sequence covers that).
+    if (log::LogSystem::logger()) {
+        // Temporarily remove console sinks, keep only file sinks
+        auto current_sinks = log::LogSystem::logger()->sinks();
+        log::LogSystem::logger()->sinks().clear();
+        for (auto& sink : current_sinks) {
+            // File sinks are NOT stdout/stderr sinks
+            auto* stdout_sink = dynamic_cast<spdlog::sinks::ansicolor_stdout_sink_mt*>(sink.get());
+            auto* stderr_sink = dynamic_cast<spdlog::sinks::ansicolor_stderr_sink_mt*>(sink.get());
+            if (!stdout_sink && !stderr_sink) {
+                log::LogSystem::logger()->sinks().push_back(sink);
+            }
+        }
+        for (const auto& entry : queue_sink->entries()) {
+            log::LogSystem::logger()->log(entry.level, "{}", entry.payload);
+        }
+        // Restore all sinks
+        log::LogSystem::logger()->sinks() = current_sinks;
+    }
 }
 
 void boot_pending_systems(SystemRegistry& registry, World& world,
@@ -447,14 +465,29 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
     // Footer
     std::cout << "\n" << ansi::DIM << line << ansi::RESET << "\n\n" << std::flush;
 
-    // Restore original sinks and replay queued logs
+    // Restore original sinks
     if (sinks_replaced && log::LogSystem::logger()) {
         log::LogSystem::logger()->sinks().clear();
         for (auto& sink : original_sinks) {
             log::LogSystem::logger()->sinks().push_back(sink);
         }
     }
-    // Queued on_start logs discarded — boot sequence [OK] lines are sufficient.
+    // Replay queued logs to FILE sinks only (not console)
+    if (log::LogSystem::logger()) {
+        auto current_sinks = log::LogSystem::logger()->sinks();
+        log::LogSystem::logger()->sinks().clear();
+        for (auto& sink : current_sinks) {
+            auto* stdout_sink = dynamic_cast<spdlog::sinks::ansicolor_stdout_sink_mt*>(sink.get());
+            auto* stderr_sink = dynamic_cast<spdlog::sinks::ansicolor_stderr_sink_mt*>(sink.get());
+            if (!stdout_sink && !stderr_sink) {
+                log::LogSystem::logger()->sinks().push_back(sink);
+            }
+        }
+        for (const auto& entry : queue_sink->entries()) {
+            log::LogSystem::logger()->log(entry.level, "{}", entry.payload);
+        }
+        log::LogSystem::logger()->sinks() = current_sinks;
+    }
 }
 
 }  // namespace ase::ecs::internal

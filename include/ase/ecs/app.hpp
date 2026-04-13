@@ -328,6 +328,14 @@ public:
     /** Access SystemRegistry for Hot-Reload (remove_systems_by_source) */
     internal::SystemRegistry& system_registry() { return *system_registry_; }
 
+    /**
+     * Pass CLI args from main(). Stored for KernelCliSystem to parse.
+     * L5 passes, L2 processes — clean layer separation.
+     */
+    void set_cli_args(int argc, char* argv[]) { cli_argc_ = argc; cli_argv_ = argv; }
+    int cli_argc() const { return cli_argc_; }
+    char** cli_argv() const { return cli_argv_; }
+
 private:
     World world_;
 
@@ -342,6 +350,8 @@ private:
     int boot_delay_us_ = 0;
     int shutdown_delay_us_ = 0;
     void(*on_destroy_callback_)() = nullptr;
+    int cli_argc_ = 0;
+    char** cli_argv_ = nullptr;
 };
 
 // =============================================================================
