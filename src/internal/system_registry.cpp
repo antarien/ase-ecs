@@ -53,6 +53,33 @@ void SystemRegistry::add_deferred(Schedule schedule, std::unique_ptr<System> sys
     ++schedule_source_counts_[schedule][info.source];
 }
 
+void SystemRegistry::reorder_schedule(Schedule schedule,
+                                       const std::vector<size_t>& permutation) {
+    auto sys_it = schedule_systems_.find(schedule);
+    if (sys_it == schedule_systems_.end()) { return; }
+    auto& systems = sys_it->second;
+    if (permutation.size() != systems.size()) { return; }
+
+    std::vector<std::unique_ptr<System>> sorted_systems;
+    sorted_systems.reserve(systems.size());
+    for (size_t idx : permutation) {
+        sorted_systems.push_back(std::move(systems[idx]));
+    }
+    systems = std::move(sorted_systems);
+
+    auto idx_it = schedule_info_indices_.find(schedule);
+    if (idx_it != schedule_info_indices_.end() &&
+        idx_it->second.size() == permutation.size()) {
+        auto& indices = idx_it->second;
+        std::vector<size_t> sorted_indices;
+        sorted_indices.reserve(indices.size());
+        for (size_t idx : permutation) {
+            sorted_indices.push_back(indices[idx]);
+        }
+        indices = std::move(sorted_indices);
+    }
+}
+
 std::vector<std::unique_ptr<System>>& SystemRegistry::systems_for(Schedule schedule) {
     return schedule_systems_[schedule];
 }

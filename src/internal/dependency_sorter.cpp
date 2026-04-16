@@ -93,14 +93,11 @@ std::vector<CycleError> sort_systems_by_dependencies(SystemRegistry& registry) {
             continue;
         }
 
-        // No cycle: NOW we can safely reorder
-        // Build new vector by moving pointers in sorted order
-        std::vector<std::unique_ptr<System>> sorted;
-        sorted.reserve(systems.size());
-        for (size_t idx : sorted_indices) {
-            sorted.push_back(std::move(systems[idx]));
-        }
-        systems = std::move(sorted);
+        // No cycle: apply the permutation to BOTH schedule_systems_ (tick loop)
+        // AND schedule_info_indices_ (boot logger) atomically, so on_start order
+        // matches tick order. Previously only schedule_systems_ was reordered,
+        // which caused run_after to be silently ignored during boot.
+        registry.reorder_schedule(schedule, sorted_indices);
     }
 
     return errors;

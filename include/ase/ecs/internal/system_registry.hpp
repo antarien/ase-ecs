@@ -93,6 +93,17 @@ public:
     const SystemMap& all_systems() const { return schedule_systems_; }
 
     /**
+     * Apply a permutation to both schedule_systems_[schedule] AND
+     * schedule_info_indices_[schedule] in lock-step, so the boot logger
+     * (which iterates schedule_info_indices_) and the tick loop (which
+     * iterates schedule_systems_) stay in sync after dependency sorting.
+     *
+     * permutation[i] = old index of the system that should land at position i.
+     * Must have the same size as schedule_systems_[schedule].
+     */
+    void reorder_schedule(Schedule schedule, const std::vector<size_t>& permutation);
+
+    /**
      * Get all system metadata.
      */
     std::vector<SystemInfo>& infos() { return system_infos_; }

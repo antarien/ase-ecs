@@ -145,10 +145,12 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
     // name_to_system: registry.find_system(name)
     // source_totals:  registry.source_total(source)
 
-    // Create queue sink to capture logs during boot
-    auto queue_sink = std::make_shared<QueueSinkMt>();
-    std::vector<spdlog::sink_ptr> original_sinks;
-    bool sinks_replaced = false;
+    // No local sink swap / queue_sink needed anymore. ase-log drives the
+    // "silent-during-boot, flushed-after-boot" behaviour itself: the logger
+    // carries only file + HTTP-ring + counting + capture-ring during the
+    // boot block (console sink is withheld), so log lines from any system's
+    // on_start cannot reach stdout until finalize_logger_after_boot runs
+    // below. No interleaving into this progress table.
 
     // Header
     std::cout << "\n" << std::flush;
@@ -248,18 +250,12 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
                       << "\x1b[38;5;" << mod_color << "m[" << info->source << "]" << ansi::RESET << " "
                       << ansi::WHITE << info->name << ansi::RESET << std::flush;
 
-            // Call on_start
+            // Call on_start. The logger stays silent on stdout here because
+            // no console sink is attached yet — that happens in
+            // finalize_logger_after_boot (called below after the footer).
             auto* system = registry.find_system(info->name);
             if (system) {
                 system->on_start(world.registry());
-
-                // Replace sinks after LogSystem starts
-                if (!sinks_replaced and log::LogSystem::logger()) {
-                    original_sinks = log::LogSystem::logger()->sinks();
-                    log::LogSystem::logger()->sinks().clear();
-                    log::LogSystem::logger()->sinks().push_back(queue_sink);
-                    sinks_replaced = true;
-                }
             }
 
             // Overwrite with [OK] [source] SystemName
@@ -286,33 +282,14 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
         std::cout << ansi::DIM << line << ansi::RESET << "\n\n" << std::flush;
     }
 
-    // Restore original sinks
-    if (sinks_replaced && log::LogSystem::logger()) {
-        log::LogSystem::logger()->sinks().clear();
-        for (auto& sink : original_sinks) {
-            log::LogSystem::logger()->sinks().push_back(sink);
-        }
-    }
-
-    // Replay queued logs to FILE sinks only (not console — boot sequence covers that).
-    if (log::LogSystem::logger()) {
-        // Temporarily remove console sinks, keep only file sinks
-        auto current_sinks = log::LogSystem::logger()->sinks();
-        log::LogSystem::logger()->sinks().clear();
-        for (auto& sink : current_sinks) {
-            // File sinks are NOT stdout/stderr sinks
-            auto* stdout_sink = dynamic_cast<spdlog::sinks::ansicolor_stdout_sink_mt*>(sink.get());
-            auto* stderr_sink = dynamic_cast<spdlog::sinks::ansicolor_stderr_sink_mt*>(sink.get());
-            if (!stdout_sink && !stderr_sink) {
-                log::LogSystem::logger()->sinks().push_back(sink);
-            }
-        }
-        for (const auto& entry : queue_sink->entries()) {
-            log::LogSystem::logger()->log(entry.level, "{}", entry.payload);
-        }
-        // Restore all sinks
-        log::LogSystem::logger()->sinks() = current_sinks;
-    }
+    // Finalize the logger: attach the console sink (parked in ase-log during
+    // LogSystem::on_start), replay the capture-ring — which holds every log
+    // line produced by Kernel::build, KernelEnvLdrSystem, KernelCliSystem
+    // AND every system's on_start during the boot block above — into all
+    // sinks (console + file + HTTP-ring + counting), then detach + drop
+    // the capture ring. Every entry lands both on stdout and in
+    // logs/{server}-{port}.log with correct [LABEL] + uppercase level format.
+    log::finalize_logger_after_boot();
 }
 
 void boot_pending_systems(SystemRegistry& registry, World& world,
