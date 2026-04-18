@@ -51,12 +51,18 @@ void App::startup() {
 
     // Late-System-Registration: if on_start() added new systems (e.g., dlopen modules),
     // re-sort and boot the pending systems. Their on_start() runs in boot_pending_systems.
-    // No separate run_schedule(Initialization/Configuration) needed — all systems already
-    // ran on_start() during print_boot_sequence + boot_pending_systems.
     if (system_registry_->has_pending()) {
         internal::sort_systems_by_dependencies(*system_registry_);
         internal::boot_pending_systems(*system_registry_, world_, boot_config);
     }
+
+    // Run Lifecycle schedules (Initialization → Configuration) once at startup.
+    // Restores the pre-e75a4fd behaviour: systems registered in Initialization
+    // or Configuration need their tick() invoked once so effects like MongoDB
+    // store_pool() actually fire. Commit a1b396d established the ordering —
+    // Initialization before Configuration.
+    run_schedule(Schedule::Initialization, 0.0f);
+    run_schedule(Schedule::Configuration, 0.0f);
 
     running_.store(true);
     last_frame_time_ = Clock::now();
