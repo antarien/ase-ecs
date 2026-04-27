@@ -179,6 +179,22 @@ public:
     }
 
     /**
+     * Add the kernel with constructor arguments forwarded to K.
+     * Used to pass tier identity etc. into the kernel at setup time,
+     * e.g. app.add_kernel<Kernel>(Tier::Replica).
+     */
+    template<Kernel K, typename... Args>
+    App& add_kernel(Args&&... args) {
+        K kernel(std::forward<Args>(args)...);
+        current_source_ = K::name();
+        current_version_ = detail::get_version<K>();
+        kernel.build(*this);
+        current_source_.clear();
+        current_version_.clear();
+        return *this;
+    }
+
+    /**
      * Add a plugin (Layer 4 - Optional features).
      */
     template<Plugin P>
