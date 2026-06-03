@@ -170,11 +170,13 @@ public:
     template<Kernel K>
     App& add_kernel() {
         K kernel;
+        std::string prev_src = std::move(current_source_);
+        std::string prev_ver = std::move(current_version_);
         current_source_ = K::name();
         current_version_ = detail::get_version<K>();
         kernel.build(*this);
-        current_source_.clear();
-        current_version_.clear();
+        current_source_ = std::move(prev_src);
+        current_version_ = std::move(prev_ver);
         return *this;
     }
 
@@ -186,11 +188,13 @@ public:
     template<Kernel K, typename... Args>
     App& add_kernel(Args&&... args) {
         K kernel(std::forward<Args>(args)...);
+        std::string prev_src = std::move(current_source_);
+        std::string prev_ver = std::move(current_version_);
         current_source_ = K::name();
         current_version_ = detail::get_version<K>();
         kernel.build(*this);
-        current_source_.clear();
-        current_version_.clear();
+        current_source_ = std::move(prev_src);
+        current_version_ = std::move(prev_ver);
         return *this;
     }
 
@@ -200,21 +204,25 @@ public:
     template<Plugin P>
     App& add_plugin() {
         P plugin;
+        std::string prev_src = std::move(current_source_);
+        std::string prev_ver = std::move(current_version_);
         current_source_ = P::name();
         current_version_ = detail::get_version<P>();
         plugin.build(*this);
-        current_source_.clear();
-        current_version_.clear();
+        current_source_ = std::move(prev_src);
+        current_version_ = std::move(prev_ver);
         return *this;
     }
 
     template<Plugin P>
     App& add_plugin(P&& plugin) {
+        std::string prev_src = std::move(current_source_);
+        std::string prev_ver = std::move(current_version_);
         current_source_ = std::decay_t<P>::name();
         current_version_ = detail::get_version<std::decay_t<P>>();
         plugin.build(*this);
-        current_source_.clear();
-        current_version_.clear();
+        current_source_ = std::move(prev_src);
+        current_version_ = std::move(prev_ver);
         return *this;
     }
 
@@ -224,21 +232,25 @@ public:
     template<Module M>
     App& add_module() {
         M module;
+        std::string prev_src = std::move(current_source_);
+        std::string prev_ver = std::move(current_version_);
         current_source_ = M::name();
         current_version_ = detail::get_version<M>();
         module.build(*this);
-        current_source_.clear();
-        current_version_.clear();
+        current_source_ = std::move(prev_src);
+        current_version_ = std::move(prev_ver);
         return *this;
     }
 
     template<Module M>
     App& add_module(M&& module) {
+        std::string prev_src = std::move(current_source_);
+        std::string prev_ver = std::move(current_version_);
         current_source_ = std::decay_t<M>::name();
         current_version_ = detail::get_version<std::decay_t<M>>();
         module.build(*this);
-        current_source_.clear();
-        current_version_.clear();
+        current_source_ = std::move(prev_src);
+        current_version_ = std::move(prev_ver);
         return *this;
     }
 
