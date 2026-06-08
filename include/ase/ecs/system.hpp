@@ -27,13 +27,11 @@
 #include <type_traits>
 #include <algorithm>
 #include <memory>
-#include <vector>
+#include <ase/containers/vector.hpp>
 
 namespace ase::ecs {
 
-// ============================================================================
-// Core Type Aliases
-// ============================================================================
+/** Core Type Aliases */
 
 /// Entity handle
 using Entity = entt::entity;
@@ -48,17 +46,13 @@ using Registry = entt::registry;
 template<typename Component>
 using Storage = entt::storage<Component>;
 
-// ============================================================================
-// View Types (for querying entities)
-// ============================================================================
+/** View Types (for querying entities) */
 
 /// View with specific components (read/write)
 template<typename... Components>
 using View = entt::view<entt::get_t<Components...>>;
 
-// ============================================================================
-// System Base
-// ============================================================================
+/** System Base */
 
 /**
  * Base class for ECS systems
@@ -93,7 +87,7 @@ public:
     [[nodiscard]] virtual int priority() const { return 0; }
 
     /// Dependencies (system names that must start before this one)
-    [[nodiscard]] virtual std::vector<std::string> dependencies() const { return {}; }
+    [[nodiscard]] virtual ase::containers::Vector<std::string> dependencies() const { return {}; }
 
     /// Is system enabled?
     [[nodiscard]] bool enabled() const { return enabled_; }
@@ -104,9 +98,7 @@ private:
     int phase_ = 0;
 };
 
-// ============================================================================
-// World (Registry + Systems)
-// ============================================================================
+/** World (Registry + Systems) */
 
 /**
  * The World contains all entities and runs systems
@@ -125,9 +117,7 @@ public:
     World(World&&) = default;
     World& operator=(World&&) = default;
 
-    // ========================================================================
-    // Entity Management
-    // ========================================================================
+    /** Entity Management */
 
     /// Create a new entity
     [[nodiscard]] Entity create() {
@@ -154,9 +144,7 @@ public:
         return registry_.storage<Entity>()->size();
     }
 
-    // ========================================================================
-    // Component Management
-    // ========================================================================
+    /** Component Management */
 
     /// Add component to entity
     template<typename Component, typename... Args>
@@ -214,9 +202,7 @@ public:
         registry_.remove<Component>(entity);
     }
 
-    // ========================================================================
-    // Views (Queries)
-    // ========================================================================
+    /** Views (Queries) */
 
     /// Get view of entities with components
     template<typename... Components>
@@ -235,9 +221,7 @@ public:
         return registry_.view<Include...>(entt::exclude<Exclude...>);
     }
 
-    // ========================================================================
-    // Signals/Events
-    // ========================================================================
+    /** Signals/Events */
 
     /// Register callback for component construction
     template<typename Component>
@@ -257,9 +241,7 @@ public:
         return registry_.on_update<Component>();
     }
 
-    // ========================================================================
-    // System Management
-    // ========================================================================
+    /** System Management */
 
     /// Add a system by type
     template<typename T, typename... Args>
@@ -328,11 +310,9 @@ public:
     [[nodiscard]] size_t system_count() const { return systems_.size(); }
 
     /// Get systems (for logging)
-    [[nodiscard]] const std::vector<std::unique_ptr<System>>& systems() const { return systems_; }
+    [[nodiscard]] const ase::containers::Vector<std::unique_ptr<System>>& systems() const { return systems_; }
 
-    // ========================================================================
-    // Direct Registry Access
-    // ========================================================================
+    /** Direct Registry Access */
 
     /// Get underlying registry (for advanced use)
     [[nodiscard]] Registry& registry() { return registry_; }
@@ -347,12 +327,10 @@ private:
     }
 
     Registry registry_;
-    std::vector<std::unique_ptr<System>> systems_;
+    ase::containers::Vector<std::unique_ptr<System>> systems_;
 };
 
-// ============================================================================
-// Common Component Tags
-// ============================================================================
+/** Common Component Tags */
 
 /// Tag for entities that need to be deleted
 struct Destroy {};
@@ -366,9 +344,7 @@ struct Created {};
 /// Tag for entities with pending network sync
 struct PendingSync {};
 
-// ============================================================================
-// Command Message (for Client→Server commands via ECS pattern)
-// ============================================================================
+/** Command Message (for Client→Server commands via ECS pattern) */
 
 /**
  * Generic command message component.
@@ -387,9 +363,7 @@ struct CommandMessage {
     std::string payload;  // JSON payload for plugin to parse
 };
 
-// ============================================================================
-// Entity ID Utilities
-// ============================================================================
+/** Entity ID Utilities */
 
 /// Get numeric ID from entity
 [[nodiscard]] inline uint32_t entity_id(Entity entity) {

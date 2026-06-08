@@ -4,7 +4,7 @@ namespace ase::ecs::internal {
 
 void SystemRegistry::add_system(Schedule schedule, std::unique_ptr<System> system,
                                  std::string name, std::string source, std::string version,
-                                 std::vector<std::string> run_after, int priority) {
+                                 ase::containers::Vector<std::string> run_after, int priority) {
     auto* sys_ptr = system.get();
 
     SystemInfo info{
@@ -54,13 +54,13 @@ void SystemRegistry::add_deferred(Schedule schedule, std::unique_ptr<System> sys
 }
 
 void SystemRegistry::reorder_schedule(Schedule schedule,
-                                       const std::vector<size_t>& permutation) {
+                                       const ase::containers::Vector<size_t>& permutation) {
     auto sys_it = schedule_systems_.find(schedule);
     if (sys_it == schedule_systems_.end()) { return; }
     auto& systems = sys_it->second;
     if (permutation.size() != systems.size()) { return; }
 
-    std::vector<std::unique_ptr<System>> sorted_systems;
+    ase::containers::Vector<std::unique_ptr<System>> sorted_systems;
     sorted_systems.reserve(systems.size());
     for (size_t idx : permutation) {
         sorted_systems.push_back(std::move(systems[idx]));
@@ -71,7 +71,7 @@ void SystemRegistry::reorder_schedule(Schedule schedule,
     if (idx_it != schedule_info_indices_.end() &&
         idx_it->second.size() == permutation.size()) {
         auto& indices = idx_it->second;
-        std::vector<size_t> sorted_indices;
+        ase::containers::Vector<size_t> sorted_indices;
         sorted_indices.reserve(indices.size());
         for (size_t idx : permutation) {
             sorted_indices.push_back(indices[idx]);
@@ -80,12 +80,12 @@ void SystemRegistry::reorder_schedule(Schedule schedule,
     }
 }
 
-std::vector<std::unique_ptr<System>>& SystemRegistry::systems_for(Schedule schedule) {
+ase::containers::Vector<std::unique_ptr<System>>& SystemRegistry::systems_for(Schedule schedule) {
     return schedule_systems_[schedule];
 }
 
-const std::vector<std::unique_ptr<System>>& SystemRegistry::systems_for(Schedule schedule) const {
-    static const std::vector<std::unique_ptr<System>> empty;
+const ase::containers::Vector<std::unique_ptr<System>>& SystemRegistry::systems_for(Schedule schedule) const {
+    static const ase::containers::Vector<std::unique_ptr<System>> empty;
     auto it = schedule_systems_.find(schedule);
     return (it != schedule_systems_.end()) ? it->second : empty;
 }
@@ -116,7 +116,7 @@ size_t SystemRegistry::schedule_source_count(Schedule schedule, const std::strin
     return src_it->second;
 }
 
-std::vector<PendingEntry> SystemRegistry::drain_pending() {
+ase::containers::Vector<PendingEntry> SystemRegistry::drain_pending() {
     return std::move(pending_);
 }
 
@@ -126,7 +126,7 @@ uint32_t SystemRegistry::remove_systems_by_source(Registry& registry, const std:
     /**
      * Collect names of systems to remove (from system_infos_).
      */
-    std::vector<std::string> names_to_remove;
+    ase::containers::Vector<std::string> names_to_remove;
     for (auto& info : system_infos_) {
         if (info.source == source) {
             names_to_remove.push_back(info.name);

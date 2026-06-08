@@ -16,7 +16,7 @@
 #include <ase/ecs/internal/system_registry.hpp>
 
 #include <string>
-#include <vector>
+#include <ase/containers/vector.hpp>
 
 namespace ase::ecs::internal {
 
@@ -26,7 +26,7 @@ namespace ase::ecs::internal {
 
 struct CycleError {
     Schedule schedule;
-    std::vector<std::string> cycle_participants;  // Systems involved in cycle
+    ase::containers::Vector<std::string> cycle_participants;  // Systems involved in cycle
 };
 
 // =============================================================================
@@ -46,6 +46,6 @@ struct CycleError {
  * @param registry System registry to sort (modified in-place)
  * @return Empty vector on success, list of CycleErrors on failure
  */
-std::vector<CycleError> sort_systems_by_dependencies(SystemRegistry& registry);
+ase::containers::Vector<CycleError> sort_systems_by_dependencies(SystemRegistry& registry);
 
 }  // namespace ase::ecs::internal

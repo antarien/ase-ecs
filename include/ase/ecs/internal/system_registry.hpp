@@ -19,8 +19,8 @@
 
 #include <memory>
 #include <string>
-#include <unordered_map>
-#include <vector>
+#include <ase/containers/hash_map.hpp>
+#include <ase/containers/vector.hpp>
 
 namespace ase::ecs::internal {
 
@@ -33,7 +33,7 @@ struct SystemInfo {
     std::string source;   // Module/Plugin name (e.g., "ase-network", "ase-pl-sky")
     std::string version;  // Module/Plugin version (e.g., "00.01.07.00057")
     Schedule schedule = Schedule::Integration;
-    std::vector<std::string> run_after;
+    ase::containers::Vector<std::string> run_after;
     int priority = 0;
 };
 
@@ -55,7 +55,7 @@ struct PendingEntry {
 
 class SystemRegistry {
 public:
-    using SystemMap = std::unordered_map<Schedule, std::vector<std::unique_ptr<System>>>;
+    using SystemMap = ase::containers::HashMap<Schedule, ase::containers::Vector<std::unique_ptr<System>>>;
 
     SystemRegistry() = default;
     ~SystemRegistry() = default;
@@ -71,7 +71,7 @@ public:
      */
     void add_system(Schedule schedule, std::unique_ptr<System> system,
                     std::string name, std::string source, std::string version,
-                    std::vector<std::string> run_after, int priority);
+                    ase::containers::Vector<std::string> run_after, int priority);
 
     /**
      * Add a deferred system to the main lists (called after boot completes).
@@ -83,8 +83,8 @@ public:
     /**
      * Get all systems for a schedule.
      */
-    std::vector<std::unique_ptr<System>>& systems_for(Schedule schedule);
-    const std::vector<std::unique_ptr<System>>& systems_for(Schedule schedule) const;
+    ase::containers::Vector<std::unique_ptr<System>>& systems_for(Schedule schedule);
+    const ase::containers::Vector<std::unique_ptr<System>>& systems_for(Schedule schedule) const;
 
     /**
      * Get all registered systems (mutable access for sorting).
@@ -101,19 +101,19 @@ public:
      * permutation[i] = old index of the system that should land at position i.
      * Must have the same size as schedule_systems_[schedule].
      */
-    void reorder_schedule(Schedule schedule, const std::vector<size_t>& permutation);
+    void reorder_schedule(Schedule schedule, const ase::containers::Vector<size_t>& permutation);
 
     /**
      * Get all system metadata.
      */
-    std::vector<SystemInfo>& infos() { return system_infos_; }
-    const std::vector<SystemInfo>& infos() const { return system_infos_; }
+    ase::containers::Vector<SystemInfo>& infos() { return system_infos_; }
+    const ase::containers::Vector<SystemInfo>& infos() const { return system_infos_; }
 
     /**
      * Get system info indices grouped by schedule. O(1) lookup per schedule.
      * Indices into system_infos_ (stable across vector reallocation).
      */
-    const std::unordered_map<Schedule, std::vector<size_t>>&
+    const ase::containers::HashMap<Schedule, ase::containers::Vector<size_t>>&
         infos_by_schedule() const { return schedule_info_indices_; }
 
     /**
@@ -162,7 +162,7 @@ public:
      * Drain the pending queue. Returns all pending entries and clears the queue.
      * O(1) move.
      */
-    std::vector<PendingEntry> drain_pending();
+    ase::containers::Vector<PendingEntry> drain_pending();
 
     // =========================================================================
     // Hot-Reload Support (Phase 9)
@@ -181,19 +181,19 @@ public:
 
 private:
     SystemMap schedule_systems_;
-    std::vector<SystemInfo> system_infos_;
+    ase::containers::Vector<SystemInfo> system_infos_;
 
     // O(1) lookup maps (populated at insert time by add_system)
-    std::unordered_map<std::string, System*> name_to_system_;
-    std::unordered_map<std::string, size_t> name_to_index_;
-    std::unordered_map<std::string, size_t> source_totals_;
-    std::unordered_map<Schedule, std::vector<size_t>> schedule_info_indices_;
-    std::unordered_map<Schedule, std::unordered_map<std::string, size_t>> schedule_source_counts_;
+    ase::containers::HashMap<std::string, System*> name_to_system_;
+    ase::containers::HashMap<std::string, size_t> name_to_index_;
+    ase::containers::HashMap<std::string, size_t> source_totals_;
+    ase::containers::HashMap<Schedule, ase::containers::Vector<size_t>> schedule_info_indices_;
+    ase::containers::HashMap<Schedule, ase::containers::HashMap<std::string, size_t>> schedule_source_counts_;
     size_t total_count_ = 0;
 
     // Late-System-Registration
     bool boot_started_ = false;
-    std::vector<PendingEntry> pending_;
+    ase::containers::Vector<PendingEntry> pending_;
 };
 
 }  // namespace ase::ecs::internal

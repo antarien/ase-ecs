@@ -20,7 +20,7 @@
 #include <memory>
 #include <string>
 #include <type_traits>
-#include <vector>
+#include <ase/containers/vector.hpp>
 
 namespace ase::ecs {
 
@@ -110,7 +110,7 @@ private:
     App& app_;
     Schedule schedule_;
     std::unique_ptr<System> system_;
-    std::vector<std::string> after_;
+    ase::containers::Vector<std::string> after_;
     std::string source_;
     std::string version_;
     int priority_ = 0;
@@ -286,7 +286,7 @@ public:
      * Internal: Called by SystemBuilder to finalize system addition.
      */
     void finalize_system(Schedule schedule, std::unique_ptr<System> system,
-                         std::vector<std::string> after, int priority,
+                         ase::containers::Vector<std::string> after, int priority,
                          std::string source = {}, std::string version = {});
 
     const std::string& current_source() const { return current_source_; }
@@ -345,10 +345,10 @@ public:
     size_t system_count() const;
 
     /** Get all system metadata (name, source, schedule, run_after) */
-    const std::vector<internal::SystemInfo>& system_infos() const;
+    const ase::containers::Vector<internal::SystemInfo>& system_infos() const;
 
     /** Get systems for a specific schedule */
-    const std::vector<std::unique_ptr<System>>& systems_for(Schedule schedule) const;
+    const ase::containers::Vector<std::unique_ptr<System>>& systems_for(Schedule schedule) const;
 
     /** Set callback invoked during shutdown (port of setOnDestroyCallback) */
     void set_on_destroy(void(*callback)()) { on_destroy_callback_ = callback; }

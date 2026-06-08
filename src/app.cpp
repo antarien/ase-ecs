@@ -21,7 +21,7 @@ App::App()
 App::~App() = default;
 
 void App::finalize_system(Schedule schedule, std::unique_ptr<System> system,
-                          std::vector<std::string> after, int priority,
+                          ase::containers::Vector<std::string> after, int priority,
                           std::string source, std::string version) {
     std::string name = system->name();
     std::string src = source.empty() ? current_source_ : std::move(source);
@@ -94,11 +94,11 @@ size_t App::system_count() const {
     return system_registry_->total_count();
 }
 
-const std::vector<internal::SystemInfo>& App::system_infos() const {
+const ase::containers::Vector<internal::SystemInfo>& App::system_infos() const {
     return system_registry_->infos();
 }
 
-const std::vector<std::unique_ptr<System>>& App::systems_for(Schedule schedule) const {
+const ase::containers::Vector<std::unique_ptr<System>>& App::systems_for(Schedule schedule) const {
     return system_registry_->systems_for(schedule);
 }
 

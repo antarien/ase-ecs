@@ -11,9 +11,8 @@
 #include <sstream>
 #include <string_view>
 #include <thread>
-#include <unordered_map>
-#include <unordered_set>
-#include <vector>
+#include <ase/containers/hash_map.hpp>
+#include <ase/containers/vector.hpp>
 
 namespace ase::ecs::internal {
 
@@ -28,7 +27,7 @@ public:
         std::string payload;
     };
 
-    std::vector<LogEntry>& entries() { return entries_; }
+    ase::containers::Vector<LogEntry>& entries() { return entries_; }
     void clear() { entries_.clear(); }
 
 protected:
@@ -39,7 +38,7 @@ protected:
     void flush_() override {}
 
 private:
-    std::vector<LogEntry> entries_;
+    ase::containers::Vector<LogEntry> entries_;
 };
 
 using QueueSinkMt = QueueSink<std::mutex>;
@@ -159,7 +158,7 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
     std::cout << ansi::DIM << line << ansi::RESET << "\n" << std::flush;
 
     // Track current index per source (for module-local counter)
-    std::unordered_map<std::string, size_t> source_current_idx;
+    ase::containers::HashMap<std::string, size_t> source_current_idx;
 
     // Use persistent schedule_info_indices_ from SystemRegistry (no temp-map!)
     const auto& by_schedule = registry.infos_by_schedule();
@@ -299,7 +298,7 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
     auto pending = registry.drain_pending();
     if (pending.empty()) { return; }
 
-    std::unordered_set<std::string> pending_names;
+    ase::containers::HashSet<std::string> pending_names;
     pending_names.reserve(pending.size());
     for (auto& entry : pending) {
         pending_names.insert(entry.name);
@@ -324,7 +323,7 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
 
     // Queue sink: capture spdlog output during on_start so it doesn't break [..]→[OK] lines
     auto queue_sink = std::make_shared<QueueSinkMt>();
-    std::vector<spdlog::sink_ptr> original_sinks;
+    ase::containers::Vector<spdlog::sink_ptr> original_sinks;
     bool sinks_replaced = false;
     if (log::LogSystem::logger()) {
         original_sinks = log::LogSystem::logger()->sinks();
@@ -334,7 +333,7 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
     }
 
     // Track per-source counters (same pattern as print_boot_sequence)
-    std::unordered_map<std::string, size_t> source_current_idx;
+    ase::containers::HashMap<std::string, size_t> source_current_idx;
 
     // Boot helper: boot all pending systems matching layer filter
     auto boot_layer = [&](bool plugins_only, const char* section_label, size_t section_count) {

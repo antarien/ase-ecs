@@ -127,6 +127,7 @@ target_link_libraries(${PROJECT_NAME}
     PUBLIC
         EnTT::EnTT       # External - Entity Component System
         ase::log         # Layer 1 - Logging
+        ase::containers  # Layer 0 - SSOT Vector/HashMap/HashSet/Array (public headers, no std:: containers)
 )
 #[[ VERBOTEN: No Layer 3 dependencies! ]]
 

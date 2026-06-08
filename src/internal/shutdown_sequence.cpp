@@ -10,8 +10,8 @@
 #include <mutex>
 #include <sstream>
 #include <thread>
-#include <unordered_map>
-#include <vector>
+#include <ase/containers/hash_map.hpp>
+#include <ase/containers/vector.hpp>
 
 namespace ase::ecs::internal {
 
@@ -26,7 +26,7 @@ public:
         std::string payload;
     };
 
-    std::vector<LogEntry>& entries() { return entries_; }
+    ase::containers::Vector<LogEntry>& entries() { return entries_; }
 
 protected:
     void sink_it_(const spdlog::details::log_msg& msg) override {
@@ -36,7 +36,7 @@ protected:
     void flush_() override {}
 
 private:
-    std::vector<LogEntry> entries_;
+    ase::containers::Vector<LogEntry> entries_;
 };
 
 using ShutdownQueueSinkMt = ShutdownQueueSink<std::mutex>;
@@ -57,7 +57,7 @@ const char* LEVEL_NAMES[] = {"TRC", "DBG", "INF", "WRN", "ERR", "CRT"};
 void print_shutdown_sequence(SystemRegistry& registry, World& world,
                               const ShutdownConfig& config) {
     // Build name → info mapping for source lookup
-    std::unordered_map<std::string, const SystemInfo*> info_map;
+    ase::containers::HashMap<std::string, const SystemInfo*> info_map;
     for (const auto& info : registry.infos()) {
         info_map[info.name] = &info;
     }
@@ -69,7 +69,7 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
     auto queue_sink = std::make_shared<ShutdownQueueSinkMt>();
 
     // Store original sinks and replace with queue sink
-    std::vector<spdlog::sink_ptr> original_sinks;
+    ase::containers::Vector<spdlog::sink_ptr> original_sinks;
     bool sinks_replaced = false;
     if (log::LogSystem::logger()) {
         original_sinks = log::LogSystem::logger()->sinks();
@@ -87,13 +87,13 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
     std::cout << ansi::DIM << line << ansi::RESET << "\n" << std::flush;
 
     // Pre-calculate GLOBAL source totals (total systems per module/plugin)
-    std::unordered_map<std::string, size_t> global_source_totals;
+    ase::containers::HashMap<std::string, size_t> global_source_totals;
     for (const auto& info : registry.infos()) {
         global_source_totals[info.source]++;
     }
 
     // Track current index per source (for module-local counter, counting UP)
-    std::unordered_map<std::string, size_t> source_current_idx;
+    ase::containers::HashMap<std::string, size_t> source_current_idx;
 
     std::cout << "\n" << std::flush;
     std::cout << "  " << ansi::BLUE << "┌─ Shutdown" << ansi::RESET << " " << ansi::DIM << "(once)" << ansi::RESET << "\n" << std::flush;

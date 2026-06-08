@@ -2,18 +2,19 @@
 #include <ase/log/log.hpp>
 
 #include <queue>
-#include <unordered_map>
+#include <ase/containers/hash_map.hpp>
+#include <ase/containers/vector.hpp>
 
 namespace ase::ecs::internal {
 
-std::vector<CycleError> sort_systems_by_dependencies(SystemRegistry& registry) {
-    std::vector<CycleError> errors;
+ase::containers::Vector<CycleError> sort_systems_by_dependencies(SystemRegistry& registry) {
+    ase::containers::Vector<CycleError> errors;
 
     for (auto& [schedule, systems] : registry.all_systems()) {
         if (systems.size() <= 1) continue;
 
         // Build name → index mapping
-        std::unordered_map<std::string, size_t> name_to_idx;
+        ase::containers::HashMap<std::string, size_t> name_to_idx;
         for (size_t i = 0; i < systems.size(); ++i) {
             if (systems[i]) {
                 name_to_idx[systems[i]->name()] = i;
@@ -21,7 +22,7 @@ std::vector<CycleError> sort_systems_by_dependencies(SystemRegistry& registry) {
         }
 
         // Find matching SystemInfo for each system
-        std::unordered_map<std::string, const SystemInfo*> info_map;
+        ase::containers::HashMap<std::string, const SystemInfo*> info_map;
         for (const auto& info : registry.infos()) {
             if (info.schedule == schedule) {
                 info_map[info.name] = &info;
@@ -29,8 +30,8 @@ std::vector<CycleError> sort_systems_by_dependencies(SystemRegistry& registry) {
         }
 
         // Build adjacency list and in-degree
-        std::vector<std::vector<size_t>> adj(systems.size());
-        std::vector<int> in_degree(systems.size(), 0);
+        ase::containers::Vector<ase::containers::Vector<size_t>> adj(systems.size());
+        ase::containers::Vector<int> in_degree(systems.size(), 0);
 
         for (size_t i = 0; i < systems.size(); ++i) {
             if (!systems[i]) continue;
@@ -58,7 +59,7 @@ std::vector<CycleError> sort_systems_by_dependencies(SystemRegistry& registry) {
             }
         }
 
-        std::vector<size_t> sorted_indices;
+        ase::containers::Vector<size_t> sorted_indices;
         sorted_indices.reserve(systems.size());
 
         while (!queue.empty()) {

@@ -15,7 +15,7 @@
 
 #include <ase/ecs/schedule.hpp>
 
-#include <array>
+#include <ase/containers/array.hpp>
 #include <functional>
 
 namespace ase::ecs::internal {
@@ -95,7 +95,7 @@ public:
     void set_max_frame_time(float max_dt) { max_frame_time_ = max_dt; }
 
 private:
-    std::array<float, TIER_COUNT> accumulators_;
+    ase::containers::Array<float, TIER_COUNT> accumulators_;
     float max_frame_time_ = 0.25f;
 };
 
