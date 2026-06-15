@@ -5,9 +5,29 @@
 #include <ase/ecs/internal/shutdown_sequence.hpp>
 #include <ase/ecs/internal/tick_scheduler.hpp>
 
+#include <atomic>
+#include <csignal>
 #include <thread>
 
 namespace ase::ecs {
+
+namespace {
+
+// Graceful-shutdown signal handling (downstrap counterpart to the boot sequence).
+// SIGINT/SIGTERM flip the running App's loop flag to false so App::run() (or a server's
+// explicit while(is_running()) loop) exits and App::shutdown() runs on_stop for every
+// system. Installed centrally in App::startup() so ALL tier servers (world/reasoning/
+// replica/engine) get the teardown — restoring the per-main handler removed in the
+// "streamline main entry point" refactor (world commit 104af81). Only an async-signal-safe
+// atomic store happens in the handler.
+std::atomic<App*> g_signal_app{nullptr};
+
+void on_terminate_signal(int /*signum*/) {
+    App* app = g_signal_app.load(std::memory_order_acquire);
+    if (app != nullptr) app->quit();
+}
+
+}  // anonymous namespace
 
 // =============================================================================
 // APP IMPLEMENTATION (Orchestrator)
@@ -66,9 +86,24 @@ void App::startup() {
 
     running_.store(true);
     last_frame_time_ = Clock::now();
+
+    // Install the graceful-shutdown handler now that boot has completed: Ctrl+C (SIGINT) or
+    // a kill (SIGTERM) breaks the run loop so shutdown() runs the on_stop downstrap. SIGHUP is
+    // ignored (terminal hangup must not kill a headless tier server). Registered last so a
+    // signal during boot cannot reach a half-built App.
+    g_signal_app.store(this, std::memory_order_release);
+    std::signal(SIGINT, on_terminate_signal);
+    std::signal(SIGTERM, on_terminate_signal);
+    std::signal(SIGHUP, SIG_IGN);
 }
 
 void App::shutdown() {
+    // Detach the signal handler before teardown so a second Ctrl+C during shutdown reverts to
+    // the default disposition (hard exit) instead of re-entering quit() on a tearing-down App.
+    std::signal(SIGINT, SIG_DFL);
+    std::signal(SIGTERM, SIG_DFL);
+    g_signal_app.store(nullptr, std::memory_order_release);
+
     // Invoke destroy callback (port of setOnDestroyCallback)
     if (on_destroy_callback_) {
         on_destroy_callback_();
