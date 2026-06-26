@@ -90,10 +90,10 @@ struct MovementModule {
 
     void build(ase::ecs::App& app) {
         // Simple registration
-        app.add_system<MovementSystem>(ase::ecs::Schedule::Update);
+        app.add_system<MovementSystem>(ase::ecs::Schedule::Integration);
 
         // With dependencies
-        app.add_system_with<CollisionSystem>(ase::ecs::Schedule::FixedUpdate)
+        app.add_system_with<CollisionSystem>(ase::ecs::Schedule::Dynamics)
             .run_after("PhysicsSystem")
             .with_priority(10);
     }
