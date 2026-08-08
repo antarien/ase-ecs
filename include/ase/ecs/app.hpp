@@ -17,9 +17,12 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <type_traits>
+#include <ase/containers/hash_map.hpp>
+#include <ase/containers/int_hash.hpp>
 #include <ase/containers/vector.hpp>
 
 namespace ase::ecs {
@@ -373,6 +376,10 @@ private:
 
     std::atomic<bool> running_{false};
     TimePoint last_frame_time_;
+    // M-B module axis: O(1) index (mod_hash<<32 | sched_id) → row entity of the
+    // EcsAppStaModTimComponent upsert in run_schedule. IntMixHash is mandatory
+    // for integer keys (ARCH_ASE_HUB_ASYNC 9.7).
+    ase::containers::HashMap<uint64_t, Entity, ase::containers::IntMixHash> mod_tim_rows_;
     std::string current_source_;
     std::string current_version_;
     int boot_delay_us_ = 0;

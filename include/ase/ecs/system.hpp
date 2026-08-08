@@ -36,6 +36,15 @@ namespace ase::ecs {
 /// Entity handle
 using Entity = entt::entity;
 
+// WIRE CONTRACT A6 (PLAN_ASE_COMPUTE_MOD_AXIS.md T1): the entity id width is FROZEN
+// as a wire contract - u32 (20-bit index, 12-bit version). An ENTT_ID_TYPE override
+// is forbidden: the only mismatch guard EnTT ships is MSVC-only (config.h detect_
+// mismatch), so under Linux NOTHING else stops two binaries of different id width
+// from being mixed on one wire. This assert makes the freeze a build error instead.
+static_assert(sizeof(entt::entity) == sizeof(uint32_t),
+              "ENTT_ID_TYPE must stay the uint32 default - the entity id width is a "
+              "frozen wire contract (region_wire.hpp EntitySnap, mod-axis condition A6)");
+
 /// Null entity constant
 inline constexpr Entity NullEntity = entt::null;
 

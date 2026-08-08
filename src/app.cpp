@@ -1,4 +1,6 @@
 #include <ase/ecs/app.hpp>
+#include <ase/ecs/components/app/state/ecs_app_sta_mod_tim_comp.hpp>
+#include <ase/ecs/components/app/state/ecs_app_sta_tim_comp.hpp>
 #include <ase/log/log.hpp>
 #include <ase/ecs/internal/boot_logger.hpp>
 #include <ase/ecs/internal/dependency_sorter.hpp>
@@ -139,6 +141,25 @@ const ase::containers::Vector<std::unique_ptr<System>>& App::systems_for(Schedul
 
 void App::tick(float dt) {
     tick_scheduler_->tick(dt, [this](Schedule schedule, float sched_dt) {
+        if (schedule == Schedule::Dynamics) {
+            // Only the orchestrator brackets a schedule execution: the measured
+            // Dynamics wall time feeds the kernel stats EMA and the region-load
+            // attribution chain via the EcsAppStaTimComponent singleton.
+            const auto sim_begin = Clock::now();
+            run_schedule(schedule, sched_dt);
+            const float sim_ms =
+                std::chrono::duration<float, std::milli>(Clock::now() - sim_begin).count();
+
+            auto& registry = world_.registry();
+            auto timing_view = registry.view<EcsAppStaTimComponent>();
+            const Entity timing_entity =
+                (timing_view.begin() != timing_view.end()) ? *timing_view.begin()
+                                                           : registry.create();
+            auto& timing = registry.get_or_emplace<EcsAppStaTimComponent>(timing_entity);
+            timing.dynamics_time_ms = sim_ms;
+            timing.dynamics_runs++;
+            return;
+        }
         run_schedule(schedule, sched_dt);
     });
 }
@@ -161,10 +182,74 @@ void App::run() {
 
 void App::run_schedule(Schedule schedule, float dt) {
     auto& systems = system_registry_->systems_for(schedule);
-    for (auto& system : systems) {
-        if (system && system->enabled()) {
-            system->tick(world_.registry(), dt);
+    if (systems.empty()) {
+        return;
+    }
+
+    /**
+     * M-B module axis (PLAN_ASE_COMPUTE_MOD_AXIS.md T3): bracket every system
+     * tick and roll the wall time up per source module. The info indices run
+     * in lockstep with the systems vector (reorder_schedule permutes both), so
+     * the registration-time (mod_hash, grp_id) attribution is O(1) per system.
+     */
+    const auto& idx_map = system_registry_->infos_by_schedule();
+    auto idx_it = idx_map.find(schedule);
+    const auto& infos = system_registry_->infos();
+
+    ase::containers::Vector<uint32_t> pass_hash;
+    ase::containers::Vector<uint32_t> pass_grp;
+    ase::containers::Vector<uint64_t> pass_us;
+
+    for (size_t i = 0; i < systems.size(); ++i) {
+        auto& system = systems[i];
+        if (!system || !system->enabled()) {
+            continue;
         }
+        const auto sys_begin = Clock::now();
+        system->tick(world_.registry(), dt);
+        const uint64_t sys_us = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - sys_begin)
+                .count());
+
+        if (idx_it == idx_map.end() || i >= idx_it->second.size()) {
+            continue;  // lockstep info missing (never expected) - keep ticking, skip attribution
+        }
+        const internal::SystemInfo& info = infos[idx_it->second[i]];
+        bool merged = false;
+        for (size_t p = 0; p < pass_hash.size(); ++p) {
+            if (pass_hash[p] == info.mod_hash) {
+                pass_us[p] += sys_us;
+                merged = true;
+                break;
+            }
+        }
+        if (!merged) {
+            pass_hash.push_back(info.mod_hash);
+            pass_grp.push_back(info.grp_id);
+            pass_us.push_back(sys_us);
+        }
+    }
+
+    /**
+     * Upsert one EcsAppStaModTimComponent row per touched (module, schedule).
+     * Running totals only ever grow (dlt_count/dlt_seen cursor discipline);
+     * consumers difference against their own cursors.
+     */
+    auto& registry = world_.registry();
+    const uint32_t sched_id = static_cast<uint32_t>(schedule);
+    for (size_t p = 0; p < pass_hash.size(); ++p) {
+        const uint64_t key = (static_cast<uint64_t>(pass_hash[p]) << 32) | sched_id;
+        auto row_it = mod_tim_rows_.find(key);
+        if (row_it == mod_tim_rows_.end() || !registry.valid(row_it->second)) {
+            mod_tim_rows_[key] = registry.create();
+            row_it = mod_tim_rows_.find(key);
+        }
+        auto& tim = registry.get_or_emplace<EcsAppStaModTimComponent>(row_it->second);
+        tim.mod_hash = pass_hash[p];
+        tim.grp_id = pass_grp[p];
+        tim.sched_id = sched_id;
+        tim.time_us += pass_us[p];
+        tim.runs++;
     }
 }
 

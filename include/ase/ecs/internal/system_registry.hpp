@@ -35,6 +35,11 @@ struct SystemInfo {
     Schedule schedule = Schedule::Integration;
     ase::containers::Vector<std::string> run_after;
     int priority = 0;
+    // M-B module axis (PLAN_ASE_COMPUTE_MOD_AXIS.md T3): System→Module is known
+    // HERE, at registration time - both fields are always resolved by add_system
+    // (never observable as defaults) so the tick loop attributes O(1).
+    uint32_t mod_hash = 0;  // FNV-1a32 (entt::hashed_string) of source
+    uint32_t grp_id = 0;    // module-group id (ase::types::mod_grp_of; MOD_GRP_ID_NONE = unregistered)
 };
 
 // =============================================================================

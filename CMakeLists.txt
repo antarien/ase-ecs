@@ -104,6 +104,8 @@ add_library(${PROJECT_NAME} STATIC
     HEADERS - COMPONENTS - APP
     App state components for rates and timing.
     ]]
+    include/ase/ecs/components/app/state/ecs_app_sta_mod_tim_comp.hpp
+    include/ase/ecs/components/app/state/ecs_app_sta_tim_comp.hpp
     include/ase/ecs/components/app/state/ecs_app_state_rates_component.hpp
 
     #[[
@@ -128,6 +130,7 @@ target_link_libraries(${PROJECT_NAME}
         EnTT::EnTT       # External - Entity Component System
         ase::log         # Layer 1 - Logging
         ase::containers  # Layer 0 - SSOT Vector/HashMap/HashSet/Array (public headers, no std:: containers)
+        ase::types       # Layer 0 - region_wire module-group registry (M-B attribution seam)
 )
 #[[ VERBOTEN: No Layer 3 dependencies! ]]
 

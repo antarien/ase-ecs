@@ -1,5 +1,9 @@
 #include <ase/ecs/internal/system_registry.hpp>
 
+#include <ase/types/region_wire.hpp>
+
+#include <entt/core/hashed_string.hpp>
+
 namespace ase::ecs::internal {
 
 void SystemRegistry::add_system(Schedule schedule, std::unique_ptr<System> system,
@@ -13,7 +17,10 @@ void SystemRegistry::add_system(Schedule schedule, std::unique_ptr<System> syste
         .version = std::move(version),
         .schedule = schedule,
         .run_after = std::move(run_after),
-        .priority = priority
+        .priority = priority,
+        // M-B module axis: resolve the module identity ONCE, at registration.
+        .mod_hash = entt::hashed_string::value(source.c_str()),
+        .grp_id = ase::types::mod_grp_of(source.c_str())
     };
 
     // Late-System-Registration: if boot is in progress, ONLY queue — do NOT
