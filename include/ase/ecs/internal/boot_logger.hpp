@@ -36,7 +36,7 @@ struct BootLoggerConfig {
  * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  *
  *   ┌─ Initialization (once)
- *   │ [46:40.867] [Boot] [001/162] [ase-kernel] [OK] KernelCoreLifecycleSystem
+ *   │ [46:40.867] [Boot] [001/162] [ase-kernel] [OK] KernelCoreLfcSystem
  *   │ [46:40.883] [Boot] [002/162] [ase-mongodb] [OK] MongodbDbConnSystem
  *
  * @param registry System registry with all systems

@@ -360,7 +360,7 @@ public:
     internal::SystemRegistry& system_registry() { return *system_registry_; }
 
     /**
-     * Pass CLI args from main(). Stored for KernelCliSystem to parse.
+     * Pass CLI args from main(). Stored for KernelCmdSystem to parse.
      * L5 passes, L2 processes — clean layer separation.
      */
     void set_cli_args(int argc, char* argv[]) { cli_argc_ = argc; cli_argv_ = argv; }

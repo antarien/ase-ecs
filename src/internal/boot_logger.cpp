@@ -283,7 +283,7 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
 
     // Finalize the logger: attach the console sink (parked in ase-log during
     // LogSystem::on_start), replay the capture-ring — which holds every log
-    // line produced by Kernel::build, KernelEnvLdrSystem, KernelCliSystem
+    // line produced by Kernel::build, KernelEnvLdrSystem, KernelCmdSystem
     // AND every system's on_start during the boot block above — into all
     // sinks (console + file + HTTP-ring + counting), then detach + drop
     // the capture ring. Every entry lands both on stdout and in
