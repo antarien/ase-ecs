@@ -1,7 +1,7 @@
 #pragma once
 
 /**
- * ASE ECS Internal - System Registry
+ * ASE CORE INFRASTRUCTURE HEADER
  *
  * @file        system_registry.hpp
  * @brief       System storage and metadata management
@@ -11,7 +11,30 @@
  *
  * @module      ase-ecs
  * @layer       1 (Core)
+ * @category    structure/datatype
  * @created     2026-02-01
+ * @modified    2026-08-20
+ * @version     1.0.0
+ *
+ * CORE INFRASTRUCTURE COMPLIANCE
+ *
+ * [ ] NOT an ECS Component or System
+ * [ ] Layer dependencies correct (L0: no ASE deps, L1: L0 only)
+ * [ ] No global mutable state (constexpr/const only)
+ * [ ] No singletons or static mutable variables
+ * [ ] Thread-safe by design (pure functions or explicit mutex)
+ * [ ] All public functions documented with @brief, @param, @return
+ * [ ] constexpr where possible (compile-time evaluation)
+ * [ ] noexcept where possible (no-throw guarantee)
+ * [ ] [[nodiscard]] on functions returning values
+ * [ ] No magic numbers (use named constants)
+ * [ ] No implicit conversions (use explicit constructors)
+ * [ ] Header-only OR header+cpp pattern (not mixed)
+ * [ ] Include guards via #pragma once
+ * [ ] Namespace matches module: ase::{module}
+ * [ ] No circular dependencies
+ * [ ] No macros (except include guards) - use constexpr/templates
+ * [ ] API stable (changes require version bump)
  */
 
 #include <ase/ecs/schedule.hpp>

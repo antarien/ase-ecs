@@ -1,7 +1,7 @@
 #pragma once
 
 /**
- * ASE ECS Internal - Tick Scheduler
+ * ASE CORE INFRASTRUCTURE HEADER
  *
  * @file        tick_scheduler.hpp
  * @brief       Data-driven tick loop using schedule metadata
@@ -10,13 +10,35 @@
  *
  * @module      ase-ecs
  * @layer       1 (Core)
+ * @category    process/computation/algorithm
  * @created     2026-02-01
+ * @modified    2026-08-20
+ * @version     1.0.0
+ *
+ * CORE INFRASTRUCTURE COMPLIANCE
+ *
+ * [ ] NOT an ECS Component or System
+ * [ ] Layer dependencies correct (L0: no ASE deps, L1: L0 only)
+ * [ ] No global mutable state (constexpr/const only)
+ * [ ] No singletons or static mutable variables
+ * [ ] Thread-safe by design (pure functions or explicit mutex)
+ * [ ] All public functions documented with @brief, @param, @return
+ * [ ] constexpr where possible (compile-time evaluation)
+ * [ ] noexcept where possible (no-throw guarantee)
+ * [ ] [[nodiscard]] on functions returning values
+ * [ ] No magic numbers (use named constants)
+ * [ ] No implicit conversions (use explicit constructors)
+ * [ ] Header-only OR header+cpp pattern (not mixed)
+ * [ ] Include guards via #pragma once
+ * [ ] Namespace matches module: ase::{module}
+ * [ ] No circular dependencies
+ * [ ] No macros (except include guards) - use constexpr/templates
+ * [ ] API stable (changes require version bump)
  */
 
 #include <ase/ecs/schedule.hpp>
 
 #include <ase/containers/array.hpp>
-#include <functional>
 
 namespace ase::ecs::internal {
 
@@ -64,10 +86,22 @@ const TierConfig* get_tier_configs();
 
 /**
  * Callback type for running a schedule.
+ *
+ * @param user     opaque pointer handed back unchanged — the caller's own object
  * @param schedule The schedule to run
- * @param dt Delta time for this schedule
+ * @param dt       Delta time for this schedule
+ *
+ * A PLAIN FUNCTION POINTER plus a user pointer, not a std::function. The house form for
+ * callbacks in this tree is exactly this pair (see TuiLogCallback in ase-log), and it is not a
+ * stylistic preference: a std::function erases the callee's type, may allocate, and calls
+ * through an indirection the optimiser cannot see past — inside a tick loop that fires up to
+ * 66 times per frame.
+ *
+ * The user pointer is what makes the plain pointer sufficient. The one caller needs its own
+ * object inside the callback, which a capture-less lambda cannot carry; it hands it in here
+ * instead, and gets it back at the front of every call.
  */
-using ScheduleRunner = std::function<void(Schedule, float)>;
+using ScheduleRunner = void (*)(void* user, Schedule schedule, float dt);
 
 /**
  * Data-driven tick scheduler.
@@ -79,10 +113,11 @@ public:
 
     /**
      * Process one frame tick.
-     * @param dt Frame delta time
-     * @param run Callback to execute schedules
+     * @param dt   Frame delta time
+     * @param run  Callback to execute schedules
+     * @param user opaque pointer passed through to every invocation of run
      */
-    void tick(float dt, ScheduleRunner run);
+    void tick(float dt, ScheduleRunner run, void* user);
 
     /**
      * Reset all accumulators.

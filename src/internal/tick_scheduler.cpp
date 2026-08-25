@@ -1,3 +1,36 @@
+/**
+ * ASE CORE INFRASTRUCTURE IMPLEMENTATION
+ *
+ * @file        tick_scheduler.cpp
+ * @brief       Data-driven tick loop using schedule metadata
+ * @description Drives every schedule from its own interval and tier instead of
+ *              from hardcoded accumulators. schedule_interval() and
+ *              schedule_tier() in schedule.hpp are the SSOT; the arrays below
+ *              only group the schedules by tier so one loop can walk them.
+ *
+ * @module      ase-ecs
+ * @layer       1 (Core)
+ * @category    process/computation/algorithm
+ * @created     2026-02-01
+ * @modified    2026-08-20
+ * @version     1.0.0
+ *
+ * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
+ *
+ * [ ] NOT an ECS System implementation
+ * [ ] Layer dependencies correct (L0: no ASE deps, L1: L0 only)
+ * [ ] Own header included FIRST
+ * [ ] No global mutable state
+ * [ ] No static initialization order fiasco
+ * [ ] Thread-safe implementations (pure or mutex-protected)
+ * [ ] All error conditions handled
+ * [ ] No exceptions thrown (use Result<T> pattern)
+ * [ ] Implementation details in anonymous namespace
+ * [ ] No inline implementations of template specializations here
+ * [ ] Platform-specific code isolated and documented
+ * [ ] Performance-critical code profiled and optimized
+ */
+
 #include <ase/ecs/internal/tick_scheduler.hpp>
 
 namespace ase::ecs::internal {
@@ -136,7 +169,7 @@ void TickScheduler::reset() {
     accumulators_.fill(0.0f);
 }
 
-void TickScheduler::tick(float dt, ScheduleRunner run) {
+void TickScheduler::tick(float dt, ScheduleRunner run, void* user) {
     // Clamp frame time
     if (dt > max_frame_time_) {
         dt = max_frame_time_;
@@ -150,14 +183,14 @@ void TickScheduler::tick(float dt, ScheduleRunner run) {
         if (config.interval <= 0.0f) {
             // Frame tier: run every tick
             for (size_t i = 0; i < config.schedule_count; ++i) {
-                run(config.schedules[i], dt);
+                run(user, config.schedules[i], dt);
             }
         } else if (config.fixed_timestep) {
             // Fixed timestep (physics): use while-loop
             accumulators_[tier] += dt;
             while (accumulators_[tier] >= config.interval) {
                 for (size_t i = 0; i < config.schedule_count; ++i) {
-                    run(config.schedules[i], config.interval);
+                    run(user, config.schedules[i], config.interval);
                 }
                 accumulators_[tier] -= config.interval;
             }
@@ -166,7 +199,7 @@ void TickScheduler::tick(float dt, ScheduleRunner run) {
             accumulators_[tier] += dt;
             if (accumulators_[tier] >= config.interval) {
                 for (size_t i = 0; i < config.schedule_count; ++i) {
-                    run(config.schedules[i], config.interval);
+                    run(user, config.schedules[i], config.interval);
                 }
                 accumulators_[tier] -= config.interval;
             }
@@ -174,7 +207,7 @@ void TickScheduler::tick(float dt, ScheduleRunner run) {
     }
 
     // Conclusion always runs at end of frame
-    run(Schedule::Conclusion, dt);
+    run(user, Schedule::Conclusion, dt);
 }
 
 }  // namespace ase::ecs::internal

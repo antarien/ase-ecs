@@ -1,9 +1,77 @@
 #pragma once
 
 /**
+ * ASE CORE INFRASTRUCTURE HEADER
+ *
  * @file        plugin_interface.hpp
+ * @brief       C ABI between the kernel and every dlopen'd module and plugin
+ * @description The single symbol a shared object exports (`ase_module_interface`
+ *              or `ase_plugin_interface`) and the function-pointer table behind
+ *              it. The kernel's ModuleLoader finds it with dlsym at runtime, so
+ *              this file is the one place in the tree where the layout is fixed
+ *              by the loader rather than by the compiler.
+ *
+ *              TWO RULE CONFLICTS STAND HERE ON PURPOSE, measured 2026-08-20:
+ *
+ *                extern "C"   the exported symbol must not be mangled - dlsym
+ *                             looks it up by that exact name, and a C++
+ *                             interface is precisely what it cannot find.
+ *                Makros       the registration macro writes a designated
+ *                             initialiser list for the C struct; a constexpr
+ *                             cannot generate the symbol definition a loader
+ *                             has to see.
+ *
+ *              The rules that name these are written for engine runtime code.
+ *              Here they name replacements that would remove the loading
+ *              mechanism itself.
+ *
+ *              THE ase-markdown COMPARISON THAT STOOD HERE IS WITHDRAWN,
+ *              measured 2026-08-22. It read "the same class as the WASM
+ *              boundary in ase-markdown" - and that boundary did NOT keep its
+ *              C linkage. src/wasm/markdown_wasm.cpp says so itself: three
+ *              findings named the construction, "all three were right", and
+ *              embind replaced it. The module now stands at 0 violations over
+ *              13 files WITH that file checked as core_impl, and it contains
+ *              extern "C" exactly zero times.
+ *
+ *              THE DIFFERENCE IS THE ONE THAT MATTERS, and it is why this file
+ *              still cannot follow: embind IS the C++ interface the rule asks
+ *              for, offered by the library itself. POSIX dlsym offers no such
+ *              thing - it resolves a symbol by its exact unmangled name, and
+ *              there is no C++ interface that produces one. The WASM case had
+ *              a replacement available and, measured at the time, no caller at
+ *              all; this one has neither: 125 files in the tree depend on these
+ *              types, 119 through the export macros.
+ *
+ *              So the conflict stands, but it stands on its own measurement -
+ *              not on a neighbour that has since moved.
+ *
  * @module      ase-ecs
  * @layer       1 (Core)
+ * @category    ecs/module
+ * @created     2026-01-16
+ * @modified    2026-08-20
+ * @version     1.1.0
+ *
+ * CORE INFRASTRUCTURE COMPLIANCE
+ *
+ * [ ] NOT an ECS Component or System
+ * [ ] Layer dependencies correct (L0: no ASE deps, L1: L0 only)
+ * [ ] No global mutable state (constexpr/const only)
+ * [ ] No singletons or static mutable variables
+ * [ ] Thread-safe by design (pure functions or explicit mutex)
+ * [ ] All public functions documented with @brief, @param, @return
+ * [ ] constexpr where possible (compile-time evaluation)
+ * [ ] noexcept where possible (no-throw guarantee)
+ * [ ] [[nodiscard]] on functions returning values
+ * [ ] No magic numbers (use named constants)
+ * [ ] No implicit conversions (use explicit constructors)
+ * [ ] Header-only OR header+cpp pattern (not mixed)
+ * [ ] Include guards via #pragma once
+ * [ ] Namespace matches module: ase::{module}
+ * [ ] No circular dependencies
+ * [ ] No macros (except include guards) - use constexpr/templates
+ * [ ] API stable (changes require version bump)
  *
  * C ABI Interface for dynamically loaded Modules (L3) and Plugins (L4).
  *
@@ -60,8 +128,19 @@
 #include <cstdint>
 #include <ase/ecs/system.hpp>  // Registry is a using-alias, cannot be forward-declared
 
-namespace ase::ecs { class App; }
-namespace ase::kernel { class KernelServiceRegistry; class KernelEventBus; class KernelConfigRegistry; }
+// Vorwaertsdeklarationen in der MEHRZEILIGEN Hausform (so wie die Nachbarheader in ase-ecs).
+// Die einzeilige Fassung trug denselben Abschlusskommentar, aber nicht am Zeilenanfang — und
+// genau darauf sieht die Lint-Regel (`^}  // namespace ase::`). Gleiche Bedeutung, gleiche ABI,
+// nur die Form, die der Baum ueberall sonst schon hat.
+namespace ase::ecs {
+class App;
+}  // namespace ase::ecs
+
+namespace ase::kernel {
+class KernelServiceRegistry;
+class KernelEventBus;
+class KernelConfigRegistry;
+}  // namespace ase::kernel
 
 // =============================================================================
 // API Version (Exact match required between loader and loaded module)

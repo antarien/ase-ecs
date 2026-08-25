@@ -1,32 +1,161 @@
+/**
+ * ASE CORE INFRASTRUCTURE IMPLEMENTATION
+ *
+ * @file        app.cpp
+ * @brief       Application assembly and the tick loop that drives it
+ * @description Builds the world from kernel, modules and plugins, then runs
+ *              the schedules through TickScheduler. This is where a process
+ *              becomes an ASE application: everything above it registers
+ *              systems, everything below it only stores or sorts them.
+ *
+ * @module      ase-ecs
+ * @layer       1 (Core)
+ * @category    ecs/module
+ * @created     2025-12-01
+ * @modified    2026-08-20
+ * @version     1.0.0
+ *
+ * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
+ *
+ * [ ] NOT an ECS System implementation
+ * [ ] Layer dependencies correct (L0: no ASE deps, L1: L0 only)
+ * [ ] Own header included FIRST
+ * [ ] No global mutable state
+ * [ ] No static initialization order fiasco
+ * [ ] Thread-safe implementations (pure or mutex-protected)
+ * [ ] All error conditions handled
+ * [ ] No exceptions thrown (use Result<T> pattern)
+ * [ ] Implementation details in anonymous namespace
+ * [ ] No inline implementations of template specializations here
+ * [ ] Platform-specific code isolated and documented
+ * [ ] Performance-critical code profiled and optimized
+ */
+
 #include <ase/ecs/app.hpp>
 #include <ase/ecs/components/app/state/ecs_app_sta_mod_tim_comp.hpp>
+#include <ase/ecs/components/app/state/ecs_app_sta_shtd_comp.hpp>
 #include <ase/ecs/components/app/state/ecs_app_sta_tim_comp.hpp>
+#include <ase/ecs/components/app/tag/ecs_app_quit_req_tag.hpp>
 #include <ase/log/log.hpp>
 #include <ase/ecs/internal/boot_logger.hpp>
 #include <ase/ecs/internal/dependency_sorter.hpp>
 #include <ase/ecs/internal/shutdown_sequence.hpp>
 #include <ase/ecs/internal/tick_scheduler.hpp>
 
-#include <atomic>
+#include <ase/platform/sleep.hpp>
+#include <ase/utils/clock.hpp>
+
 #include <csignal>
-#include <thread>
+
+// Signalzustellung ueber einen Deskriptor statt ueber einen Handler (siehe den Block im anonymen
+// Namensraum). <csignal> bleibt fuer sigset_t und die SIG*-Namen; die drei folgenden Header sind
+// POSIX und tragen signalfd/read/close/pthread_sigmask.
+#include <pthread.h>
+#include <sys/signalfd.h>
+#include <unistd.h>
 
 namespace ase::ecs {
 
 namespace {
 
-// Graceful-shutdown signal handling (downstrap counterpart to the boot sequence).
-// SIGINT/SIGTERM flip the running App's loop flag to false so App::run() (or a server's
-// explicit while(is_running()) loop) exits and App::shutdown() runs on_stop for every
-// system. Installed centrally in App::startup() so ALL tier servers (world/reasoning/
-// replica/engine) get the teardown — restoring the per-main handler removed in the
-// "streamline main entry point" refactor (world commit 104af81). Only an async-signal-safe
-// atomic store happens in the handler.
-std::atomic<App*> g_signal_app{nullptr};
+/**
+ * GRACEFUL SHUTDOWN OHNE SIGNALHANDLER — umgebaut am 2026-08-22.
+ *
+ * SIGINT/SIGTERM setzen das Laufflag der App auf false, damit App::run() austritt und
+ * App::shutdown() das on_stop jedes Systems faehrt. Zentral in App::startup() eingerichtet,
+ * damit ALLE Tier-Server (world/reasoning/replica/engine/dist) den Abbau bekommen — das stellt
+ * den per-main-Weg wieder her, der im Refactor „streamline main entry point" (world commit
+ * 104af81) verlorenging. Seit der Schleifen-Vereinheitlichung rufen alle fuenf mains run();
+ * eigene while-Schleifen je Server gibt es nicht mehr.
+ *
+ * HIER STAND EIN SIGNALHANDLER, und die Regel SIGNAL_HANDLERS_FORBIDDEN verbietet ihn mit der
+ * Begruendung „Use ECS event pattern". Das war keine Formalie: ein Handler laeuft im
+ * Signalkontext und darf dort fast nichts — kein malloc, keine Sperre, kein Registry-Zugriff.
+ * Genau deshalb konnte er nur einen atomaren Store tun und brauchte einen globalen App*-Zeiger,
+ * um ueberhaupt an die Instanz zu kommen.
+ *
+ * DIE AUFLOESUNG IST NICHT „woanders hin": die Regel traegt `file_filter: null` und gilt in
+ * JEDER Datei des Baums, auch in den fuenf main.cpp. Ein Umzug nach L5 haette aus einer
+ * Fundstelle fuenf gemacht und nichts geloest. Ein ersatzloser Wegfall haette fuenf Servern den
+ * geordneten Shutdown genommen.
+ *
+ * STATTDESSEN VERSCHWINDET DIE SACHE SELBST: die Signale werden fuer den Prozess BLOCKIERT und
+ * ueber einen signalfd zugestellt. Damit gibt es keinen asynchronen Rueckruf mehr, keinen
+ * Signalkontext, keine async-signal-safety-Beschraenkung und keinen globalen App*-Zeiger. Das
+ * Signal ist ein EREIGNIS, das der Tick abholt — woertlich das, was die Regelmeldung verlangt.
+ *
+ * DER PREIS, ehrlich benannt: das Flag faellt nicht mehr sofort, sondern beim naechsten Tick
+ * (≤ 16,7 ms bei 60 Hz). Beim Herunterfahren belanglos. Und bei einem HAENGENDEN System waren
+ * beide Formen ohnehin gleich hilflos — der alte Handler setzte das Flag sofort, aber die
+ * Schleife waere nie zur Abfrage zurueckgekehrt.
+ *
+ * DER DESKRIPTOR LIEGT IN EINEM COMPONENT, nicht in einer Dateivariablen. Hier stand zuerst ein
+ * `int g_shutdown_fd` — und die zweite Regel, GLOBAL_VARIABLE_FORBIDDEN, haette ihn getroffen
+ * („Use Components or registry.ctx()"). Der alte `std::atomic<App*> g_signal_app` entging ihrem
+ * Muster nur, weil `std::atomic<...>` kein `\w+\s+g_\w+` ist; die Sache war dieselbe.
+ *
+ * BEIDE REGELN ZEIGEN AUF DIESELBE BAUFORM, und das ist kein Zufall: ohne Signalkontext darf
+ * der Zustand dort liegen, wo ECS-Zustand liegt. Siehe EcsAppStaShtdComponent — die ANWESENHEIT
+ * des Components heisst „Wache scharf", weshalb der Deskriptor keinen Ungueltigkeitswert
+ * braucht.
+ */
 
-void on_terminate_signal(int /*signum*/) {
-    App* app = g_signal_app.load(std::memory_order_acquire);
-    if (app != nullptr) app->quit();
+/**
+ * Richtet die Zustellung ein und liefert den Deskriptor, oder einen negativen Wert.
+ *
+ * pthread_sigmask BLOCKIERT die drei Signale prozessweit — ohne das wuerde SIGINT weiterhin das
+ * Vorgabeverhalten ausloesen (sofortiger Tod) und der signalfd niemals etwas sehen. SIGHUP ist
+ * mit in der Maske: ein Terminal-Hangup darf einen kopflosen Tier-Server nicht toeten, und eine
+ * blockierte Zustellung tut genau das, was SIG_IGN vorher tat.
+ */
+int open_shutdown_watch() {
+    // Der Aufrufwert -1 heisst „neuen Deskriptor anlegen"; derselbe Wert kommt im Fehlerfall
+    // zurueck. Beides ist POSIX und steht hier lokal, nicht auf Dateiebene.
+    constexpr int NewDescriptor = -1;
+
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGINT);
+    sigaddset(&mask, SIGTERM);
+    sigaddset(&mask, SIGHUP);
+
+    if (pthread_sigmask(SIG_BLOCK, &mask, nullptr) != 0) {
+        return NewDescriptor;
+    }
+    return ::signalfd(NewDescriptor, &mask, SFD_NONBLOCK | SFD_CLOEXEC);
+}
+
+/**
+ * Holt ein anstehendes Abbruchsignal ab. true heisst „der Betreiber will beenden".
+ *
+ * Nichtblockierend: liegt nichts an, liefert ::read -1 mit EAGAIN und der Tick laeuft weiter.
+ * SIGHUP wird gelesen und VERWORFEN — er ist blockiert, damit er nicht toetet, nicht damit er
+ * beendet. Ohne dieses Auslesen bliebe er im Deskriptor stehen.
+ */
+bool shutdown_requested(int fd) {
+    bool requested = false;
+    struct signalfd_siginfo info {};
+    while (::read(fd, &info, sizeof(info)) == static_cast<long>(sizeof(info))) {
+        if (info.ssi_signo != static_cast<uint32_t>(SIGHUP)) {
+            requested = true;
+        }
+    }
+    return requested;
+}
+
+/**
+ * Gibt die Zustellung zurueck. Nach dem Aufheben der Maske gilt wieder das Vorgabeverhalten —
+ * ein zweites Strg+C waehrend des Abbaus beendet hart, statt in eine halb abgebaute App zu
+ * laufen. Das ist dieselbe Absicht, die vorher das Zuruecksetzen auf SIG_DFL hatte.
+ */
+void close_shutdown_watch(int fd) {
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGINT);
+    sigaddset(&mask, SIGTERM);
+    sigaddset(&mask, SIGHUP);
+    pthread_sigmask(SIG_UNBLOCK, &mask, nullptr);
+    ::close(fd);
 }
 
 }  // anonymous namespace
@@ -87,24 +216,51 @@ void App::startup() {
     run_schedule(Schedule::Configuration, 0.0f);
 
     running_.store(true);
-    last_frame_time_ = Clock::now();
+    last_frame_time_ = utils::monotonic_nanos();
 
-    // Install the graceful-shutdown handler now that boot has completed: Ctrl+C (SIGINT) or
-    // a kill (SIGTERM) breaks the run loop so shutdown() runs the on_stop downstrap. SIGHUP is
-    // ignored (terminal hangup must not kill a headless tier server). Registered last so a
-    // signal during boot cannot reach a half-built App.
-    g_signal_app.store(this, std::memory_order_release);
-    std::signal(SIGINT, on_terminate_signal);
-    std::signal(SIGTERM, on_terminate_signal);
-    std::signal(SIGHUP, SIG_IGN);
+    /**
+     * Arm the shutdown watch now that boot has completed: Ctrl+C (SIGINT) or a kill (SIGTERM)
+     * breaks the run loop so shutdown() runs the on_stop downstrap. SIGHUP is swallowed (a
+     * terminal hangup must not kill a headless tier server). Armed LAST so a signal during boot
+     * cannot reach a half-built App.
+     *
+     * SCHEITERT DAS SCHARFSCHALTEN, ENTSTEHT KEIN COMPONENT — und dann meldet es sich, statt
+     * still ein Nichts zu sein. Ohne Wache laeuft der Server weiter, aber Strg+C beendet ihn
+     * hart: on_stop faellt aus, offene Verbindungen und Puffer werden nicht abgebaut. Das ist
+     * genau die Sorte Fehlschlag, die von „Erfolg ohne Arbeit" nicht zu unterscheiden waere.
+     */
+    const int watch_fd = open_shutdown_watch();
+    if (watch_fd < 0) {
+        log::warn(log::WRN::CAT::HOST_OP_FAILED, "App", "shutdown_watch_arm",
+                  "SIGINT/SIGTERM will terminate hard, on_stop will NOT run");
+        return;
+    }
+
+    auto& registry = world_.registry();
+    const Entity watch_entity = registry.create();
+    registry.emplace<EcsAppStaShtdComponent>(watch_entity).watch_fd =
+        static_cast<int32_t>(watch_fd);
 }
 
 void App::shutdown() {
-    // Detach the signal handler before teardown so a second Ctrl+C during shutdown reverts to
-    // the default disposition (hard exit) instead of re-entering quit() on a tearing-down App.
-    std::signal(SIGINT, SIG_DFL);
-    std::signal(SIGTERM, SIG_DFL);
-    g_signal_app.store(nullptr, std::memory_order_release);
+    /**
+     * Disarm the shutdown watch before teardown so a second Ctrl+C during shutdown reverts to
+     * the default disposition (hard exit) instead of stalling on a tearing-down App. Das
+     * Aufheben der Maske stellt genau das her, was frueher das Zuruecksetzen auf SIG_DFL tat.
+     *
+     * Erst SAMMELN, dann loeschen: waehrend der Iteration eines Views darf keine Entity
+     * zerstoert werden. Es ist genau eine — der Vektor ist die FORM, nicht die Menge.
+     */
+    auto& registry = world_.registry();
+    ase::containers::Vector<Entity> watch_entities;
+    auto watch_view = registry.view<EcsAppStaShtdComponent>();
+    for (auto entity : watch_view) {
+        close_shutdown_watch(static_cast<int>(watch_view.get<EcsAppStaShtdComponent>(entity).watch_fd));
+        watch_entities.push_back(entity);
+    }
+    for (uint32_t i = 0; i < watch_entities.size(); ++i) {
+        registry.destroy(watch_entities[i]);
+    }
 
     // Invoke destroy callback (port of setOnDestroyCallback)
     if (on_destroy_callback_) {
@@ -139,42 +295,121 @@ const ase::containers::Vector<std::unique_ptr<System>>& App::systems_for(Schedul
     return system_registry_->systems_for(schedule);
 }
 
-void App::tick(float dt) {
-    tick_scheduler_->tick(dt, [this](Schedule schedule, float sched_dt) {
-        if (schedule == Schedule::Dynamics) {
-            // Only the orchestrator brackets a schedule execution: the measured
-            // Dynamics wall time feeds the kernel stats EMA and the region-load
-            // attribution chain via the EcsAppStaTimComponent singleton.
-            const auto sim_begin = Clock::now();
-            run_schedule(schedule, sched_dt);
-            const float sim_ms =
-                std::chrono::duration<float, std::milli>(Clock::now() - sim_begin).count();
+void App::schedule_trampoline(void* user, Schedule schedule, float sched_dt) {
+    static_cast<App*>(user)->run_schedule_measured(schedule, sched_dt);
+}
 
-            auto& registry = world_.registry();
-            auto timing_view = registry.view<EcsAppStaTimComponent>();
-            const Entity timing_entity =
-                (timing_view.begin() != timing_view.end()) ? *timing_view.begin()
-                                                           : registry.create();
-            auto& timing = registry.get_or_emplace<EcsAppStaTimComponent>(timing_entity);
-            timing.dynamics_time_ms = sim_ms;
-            timing.dynamics_runs++;
-            return;
-        }
+void App::run_schedule_measured(Schedule schedule, float sched_dt) {
+    if (schedule == Schedule::Dynamics) {
+        // Only the orchestrator brackets a schedule execution: the measured
+        // Dynamics wall time feeds the kernel stats EMA and the region-load
+        // attribution chain via the EcsAppStaTimComponent singleton.
+        const int64_t sim_begin = utils::monotonic_nanos();
         run_schedule(schedule, sched_dt);
-    });
+        const float sim_ms = static_cast<float>(utils::monotonic_nanos() - sim_begin) /
+                             static_cast<float>(utils::NANOS_PER_MILLI);
+
+        auto& registry = world_.registry();
+        auto timing_view = registry.view<EcsAppStaTimComponent>();
+        const Entity timing_entity =
+            (timing_view.begin() != timing_view.end()) ? *timing_view.begin()
+                                                       : registry.create();
+        auto& timing = registry.get_or_emplace<EcsAppStaTimComponent>(timing_entity);
+        timing.dynamics_time_ms = sim_ms;
+        timing.dynamics_runs++;
+        return;
+    }
+    run_schedule(schedule, sched_dt);
+}
+
+void App::tick(float dt) {
+    /**
+     * DIE SIGNALABHOLUNG STEHT IN tick(), NICHT IN run(). Historisch, weil drei Server eigene
+     * while-Schleifen um tick() fuhren und ein Abholen in run() sie still ohne geordneten
+     * Shutdown gelassen haette; diese Schleifen sind in run() aufgegangen und alle fuenf mains
+     * rufen run(). Die Platzierung bleibt trotzdem hier: tick() ist der eine Punkt, durch den
+     * JEDER Treiber der App kommt — auch ein Test oder ein Werkzeug, das tick() direkt ruft —
+     * und die Quit-Tag-Abholung darunter braucht die Registry ohnehin je Tick.
+     *
+     * Der View ist leer, wenn die Wache nicht scharf ist; dann kostet das hier nichts.
+     */
+    auto& registry = world_.registry();
+    auto watch_view = registry.view<EcsAppStaShtdComponent>();
+    for (auto entity : watch_view) {
+        if (shutdown_requested(static_cast<int>(watch_view.get<EcsAppStaShtdComponent>(entity).watch_fd))) {
+            running_.store(false);
+        }
+    }
+
+    /**
+     * DIE ZWEITE STOPPQUELLE NEBEN DEM SIGNAL: das Quit-Tag. Ein System bekommt die Registry
+     * und nie die App — beenden kann den Prozess deshalb nur ein EREIGNIS, das der Tick abholt.
+     * Wer oberhalb von L1 fertig ist (heute: KernelCoreLfcSystem im selben Durchlauf, der
+     * KernelCoreRunnTag entfernt), stampft EcsAppQuitReqTag; hier wird es gelesen. Vorher trug
+     * NUR ase-server-reasoning diese Bruecke, als Sonderschritt in seiner eigenen main-Schleife —
+     * die vier anderen Tiers tickten einen gestoppten Kernel endlos weiter. Der View ist leer,
+     * solange niemand stoppt; dann kostet das hier nichts.
+     */
+    auto quit_view = registry.view<EcsAppQuitReqTag>();
+    if (quit_view.begin() != quit_view.end()) {
+        running_.store(false);
+    }
+
+    // Hier stand ein Lambda mit [this]-Capture. Es konnte nicht bleiben, weil der Rueckruf
+    // jetzt ein blosser Funktionszeiger ist — ein Lambda mit Capture zerfaellt nicht zu einem
+    // solchen. Der Zustand, den die Capture trug, geht denselben Weg wie ueberall sonst im
+    // Baum: als undurchsichtiger Zeiger durch den Rueckruf hindurch und am anderen Ende
+    // zurueckgeholt.
+    tick_scheduler_->tick(dt, &App::schedule_trampoline, this);
 }
 
 void App::run() {
     startup();
 
+    /**
+     * GETAKTET AUF DIE FRAME-BAND-RATE, NICHT FREILAUFEND — UND DIES IST DIE EINE SCHLEIFE
+     * ALLER FUENF TIERS. Der Frame-Tier hat im Ticker interval = 0.0f und laeuft in JEDER
+     * Iteration — die Schleifenrate IST die Frame-Band-Rate. Hier stand ein festes
+     * 1-ms-Abgeben: damit lief das Frame-Band so schnell, wie die eigene Arbeit es zuliess
+     * (Obergrenze 1000 Hz statt der in schedule.hpp deklarierten 60), und ein World-/
+     * Replica-Knoten verbrannte gemessen rund 0.8 Kerne, im Leerlauf genauso wie unter Last.
+     * Engine/Reasoning/Dist trugen daneben je eine EIGENE Handschleife mit relativem Pacing
+     * und einem KONSTANTEN dt von 1/60 — zwei Bauformen, jede mit ihrem eigenen Zeitdefekt
+     * (Audit 02-schedule-landkarte.md, Walls 6 und 9). Beide Formen sind hierin aufgegangen.
+     *
+     * schedule_hz(Schedule::Reception) ist die SSOT der Rate: die 60.0f aus schedule.hpp
+     * treibt den Takt, statt unbenutzte Doku zu sein. dt bleibt die GEMESSENE Spanne, nie
+     * eine Konstante.
+     *
+     * ABSOLUTE DEADLINES, NICHT RELATIVER REST: ein Pacer, der `Budget - Arbeit` nachschlaeft,
+     * erbt die Aufwachlatenz des Schedulers als frischen Fehler in JEDEM Frame und driftet
+     * dauerhaft unter die Nennrate. sleep_until_nanos uebergibt dem Kernel die Deadline
+     * selbst; das Verschlafen eines Frames verkuerzt den Schlaf des naechsten um exakt
+     * denselben Betrag — die Langzeitrate IST die Nennrate. Ueberzieht ein Tick sein Budget,
+     * wird die Deadline NEU VERANKERT statt aufgeholt: eine Aufholjagd wuerde nach einem
+     * Stall mehrere Frames ohne Schlaf hintereinander feuern, und die Tier-Akkumulatoren
+     * arbeiten ohnehin mit dem gemessenen dt — verlorene Zeit ist dort schon verbucht.
+     */
+    constexpr int64_t FrameIntervalNanos = static_cast<int64_t>(
+        static_cast<float>(utils::NANOS_PER_SECOND) / schedule_hz(Schedule::Reception));
+
+    int64_t next_deadline = utils::monotonic_nanos() + FrameIntervalNanos;
+
     while (running_.load()) {
-        auto now = Clock::now();
-        float frame_dt = Duration(now - last_frame_time_).count();
+        const int64_t now = utils::monotonic_nanos();
+        const float frame_dt = static_cast<float>(now - last_frame_time_) /
+                               static_cast<float>(utils::NANOS_PER_SECOND);
         last_frame_time_ = now;
 
         tick(frame_dt);
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        const int64_t after = utils::monotonic_nanos();
+        if (after < next_deadline) {
+            ase::platform::sleep_until_nanos(static_cast<uint64_t>(next_deadline));
+            next_deadline += FrameIntervalNanos;
+        } else {
+            next_deadline = after + FrameIntervalNanos;
+        }
     }
 
     shutdown();
@@ -205,11 +440,10 @@ void App::run_schedule(Schedule schedule, float dt) {
         if (!system || !system->enabled()) {
             continue;
         }
-        const auto sys_begin = Clock::now();
+        const int64_t sys_begin = utils::monotonic_nanos();
         system->tick(world_.registry(), dt);
         const uint64_t sys_us = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - sys_begin)
-                .count());
+            (utils::monotonic_nanos() - sys_begin) / utils::NANOS_PER_MICRO);
 
         if (idx_it == idx_map.end() || i >= idx_it->second.size()) {
             continue;  // lockstep info missing (never expected) - keep ticking, skip attribution

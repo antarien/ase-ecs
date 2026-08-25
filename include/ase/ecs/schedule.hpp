@@ -12,9 +12,9 @@
  *
  * @module      ase-ecs
  * @layer       1 (Core)
- * @category    schedule
+ * @category    property/temporal/schedule/timing
  * @created     2025-01-01
- * @modified    2026-01-19
+ * @modified    2026-08-20
  * @version     2.0.0
  *
  * LAYER RULES:
@@ -47,7 +47,6 @@
  */
 
 #include <cstdint>
-#include <string_view>
 
 namespace ase::ecs {
 
@@ -61,7 +60,7 @@ namespace ase::ecs {
  * Inspired by Bevy's schedule system. 66 schedules across 21 frequency tiers.
  *
  * Schedule execution order:
- *   Initialization (once) -> MainLoop (repeating) -> Finalization (once)
+ *   Initialization (once) → MainLoop (repeating) → Finalization (once)
  *
  * MainLoop contains multiple frequency tiers from ~60Hz down to 1/day,
  * plus Game-Time schedules triggered by the Antarian Calendar.
@@ -412,126 +411,166 @@ enum class Schedule : uint8_t {
 }
 
 /**
- * @brief Get schedule name as string (for logging)
- * @param s The schedule to query
- * @return Schedule name as string_view
+ * One row of the schedule name table: the value and the text it prints as.
+ *
+ * WHY A TABLE AND NOT A SWITCH: a switch over these 66 values is a type dispatch written as
+ * control flow, and the rule against it is not cosmetic — every added schedule needs a new
+ * branch in a function that already spans a hundred lines, and a forgotten one falls silently
+ * into the default. As data, a schedule is ONE line, and a missing line is visible as a
+ * missing line.
+ *
+ * WHY PAIRS AND NOT AN INDEXED ARRAY: the enum is deliberately sparse — tiers occupy their own
+ * decade, so 66 schedules span the range 0..210. MEASURED: an array indexed by the enum value
+ * would need 211 slots of which 145 are holes, and every future insertion would have to land
+ * on exactly the right index. The pair form has no holes and no position to get wrong.
  */
-[[nodiscard]] constexpr std::string_view schedule_name(Schedule s) noexcept {
-    switch (s) {
-        // Lifecycle
-        case Schedule::Initialization:  return "Initialization";
-        case Schedule::Configuration:   return "Configuration";
-        case Schedule::Termination:     return "Termination";
-        case Schedule::Finalization:    return "Finalization";
-        // Frame
-        case Schedule::Reception:       return "Reception";
-        case Schedule::Ingestion:       return "Ingestion";
-        case Schedule::Integration:     return "Integration";
-        case Schedule::Production:      return "Production";
-        case Schedule::Conclusion:      return "Conclusion";
-        // Kinetic
-        case Schedule::Dynamics:        return "Dynamics";
-        case Schedule::Kinematics:      return "Kinematics";
-        case Schedule::Collision:       return "Collision";
-        // Reactive
-        case Schedule::Transmission:    return "Transmission";
-        case Schedule::Synchronization: return "Synchronization";
-        // Tactical
-        case Schedule::Perception:      return "Perception";
-        case Schedule::Reaction:        return "Reaction";
-        case Schedule::Navigation:      return "Navigation";
-        case Schedule::Evaluation:      return "Evaluation";
-        // Adaptive
-        case Schedule::Deliberation:    return "Deliberation";
-        case Schedule::Aggregation:     return "Aggregation";
-        case Schedule::Correlation:     return "Correlation";
-        case Schedule::Coordination:    return "Coordination";
-        // Progressive
-        case Schedule::Modulation:      return "Modulation";
-        case Schedule::Regulation:      return "Regulation";
-        case Schedule::Adaptation:      return "Adaptation";
-        // Cyclic
-        case Schedule::Dissemination:   return "Dissemination";
-        case Schedule::Preservation:    return "Preservation";
-        case Schedule::Observation:     return "Observation";
-        // Gradual
-        case Schedule::Accumulation:    return "Accumulation";
-        case Schedule::Consolidation:   return "Consolidation";
-        // Incremental
-        case Schedule::Maintenance:     return "Maintenance";
-        case Schedule::Reconciliation:  return "Reconciliation";
-        // Ambient
-        case Schedule::Maturation:      return "Maturation";
-        case Schedule::Degradation:     return "Degradation";
-        // Periodic
-        case Schedule::Regeneration:    return "Regeneration";
-        case Schedule::Decomposition:   return "Decomposition";
-        // Epochal
-        case Schedule::Evolution:       return "Evolution";
-        case Schedule::Erosion:         return "Erosion";
-        // Extended
-        case Schedule::Succession:      return "Succession";
-        case Schedule::Transformation:  return "Transformation";
-        // Diurnal (Real-Time)
-        case Schedule::Culmination:     return "Culmination";
-        case Schedule::Renewal:         return "Renewal";
-        // =====================================================================
-        // GAME-TIME SCHEDULES (Antarian Calendar - Lexicon Temporis)
-        // =====================================================================
-        // GameTumbrae (1 TUMBRAE = 30 hours = 20 min real-time)
-        case Schedule::GameDawn:        return "GameDawn";
-        case Schedule::GameDusk:        return "GameDusk";
-        case Schedule::GameMidnight:    return "GameMidnight";
-        // GameNovendrix (9 TUMBRAE = 3h real-time)
-        case Schedule::Novendrix:       return "Novendrix";
-        case Schedule::Serpum:          return "Serpum";
-        case Schedule::Fractum:         return "Fractum";
-        // GameLunbrex (27 TUMBRAE = 9h real-time)
-        case Schedule::Lunbrex:         return "Lunbrex";
-        case Schedule::ScorpiiCycle:    return "ScorpiiCycle";
-        // GameConiunctrix (Moon Conjunctions)
-        case Schedule::CrucixAurix:     return "CrucixAurix";
-        case Schedule::LunixSanguex:    return "LunixSanguex";
-        // GameTemporix (Seasons ~2 weeks real-time)
-        case Schedule::Temporix:        return "Temporix";
-        case Schedule::GlacixUmbrae:    return "GlacixUmbrae";
-        case Schedule::IgnixVertum:     return "IgnixVertum";
-        case Schedule::HalitrixNebulox: return "HalitrixNebulox";
-        case Schedule::SaltatrixMortum: return "SaltatrixMortum";
-        // GameStellar (Stellar cycles)
-        case Schedule::PulsatrixAntarix:return "PulsatrixAntarix";
-        case Schedule::CyclumArcturix:  return "CyclumArcturix";
-        case Schedule::TrinitaxLuminex: return "TrinitaxLuminex";
-        // GameVectum (1 VECTUM = 4021 TUMBRAE = 56 days)
-        case Schedule::VectumMortis:    return "VectumMortis";
-        case Schedule::NewVectum:       return "NewVectum";
-        // GameTenebrax (The Great Darkness)
-        case Schedule::TenebraxMagnorum:return "TenebraxMagnorum";
-        // GameAetrix (Epochs)
-        case Schedule::AetrixMinorum:   return "AetrixMinorum";
-        case Schedule::AetrixMaiorum:   return "AetrixMaiorum";
-        // GameAevrix (Aeon)
-        case Schedule::Aevrix:          return "Aevrix";
-        default:                        return "Unknown";
+struct ScheduleNameRow {
+    Schedule    value;
+    const char* name;
+};
+
+/**
+ * @brief Schedule names, in tier order (for logging).
+ *
+ * The comments below are the tiers, kept from the switch this replaced — they are the reason
+ * the order is not alphabetical and must survive any future edit.
+ */
+inline constexpr ScheduleNameRow kScheduleNames[] = {
+    // Lifecycle
+    {Schedule::Initialization,   "Initialization"},
+    {Schedule::Configuration,    "Configuration"},
+    {Schedule::Termination,      "Termination"},
+    {Schedule::Finalization,     "Finalization"},
+    // Frame
+    {Schedule::Reception,        "Reception"},
+    {Schedule::Ingestion,        "Ingestion"},
+    {Schedule::Integration,      "Integration"},
+    {Schedule::Production,       "Production"},
+    {Schedule::Conclusion,       "Conclusion"},
+    // Kinetic
+    {Schedule::Dynamics,         "Dynamics"},
+    {Schedule::Kinematics,       "Kinematics"},
+    {Schedule::Collision,        "Collision"},
+    // Reactive
+    {Schedule::Transmission,     "Transmission"},
+    {Schedule::Synchronization,  "Synchronization"},
+    // Tactical
+    {Schedule::Perception,       "Perception"},
+    {Schedule::Reaction,         "Reaction"},
+    {Schedule::Navigation,       "Navigation"},
+    {Schedule::Evaluation,       "Evaluation"},
+    // Adaptive
+    {Schedule::Deliberation,     "Deliberation"},
+    {Schedule::Aggregation,      "Aggregation"},
+    {Schedule::Correlation,      "Correlation"},
+    {Schedule::Coordination,     "Coordination"},
+    // Progressive
+    {Schedule::Modulation,       "Modulation"},
+    {Schedule::Regulation,       "Regulation"},
+    {Schedule::Adaptation,       "Adaptation"},
+    // Cyclic
+    {Schedule::Dissemination,    "Dissemination"},
+    {Schedule::Preservation,     "Preservation"},
+    {Schedule::Observation,      "Observation"},
+    // Gradual
+    {Schedule::Accumulation,     "Accumulation"},
+    {Schedule::Consolidation,    "Consolidation"},
+    // Incremental
+    {Schedule::Maintenance,      "Maintenance"},
+    {Schedule::Reconciliation,   "Reconciliation"},
+    // Ambient
+    {Schedule::Maturation,       "Maturation"},
+    {Schedule::Degradation,      "Degradation"},
+    // Periodic
+    {Schedule::Regeneration,     "Regeneration"},
+    {Schedule::Decomposition,    "Decomposition"},
+    // Epochal
+    {Schedule::Evolution,        "Evolution"},
+    {Schedule::Erosion,          "Erosion"},
+    // Extended
+    {Schedule::Succession,       "Succession"},
+    {Schedule::Transformation,   "Transformation"},
+    // Diurnal (Real-Time)
+    {Schedule::Culmination,      "Culmination"},
+    {Schedule::Renewal,          "Renewal"},
+
+    // =========================================================================
+    // GAME-TIME SCHEDULES (Antarian Calendar - Lexicon Temporis)
+    // =========================================================================
+    // GameTumbrae (1 TUMBRAE = 30 hours = 20 min real-time)
+    {Schedule::GameDawn,         "GameDawn"},
+    {Schedule::GameDusk,         "GameDusk"},
+    {Schedule::GameMidnight,     "GameMidnight"},
+    // GameNovendrix (9 TUMBRAE = 3h real-time)
+    {Schedule::Novendrix,        "Novendrix"},
+    {Schedule::Serpum,           "Serpum"},
+    {Schedule::Fractum,          "Fractum"},
+    // GameLunbrex (27 TUMBRAE = 9h real-time)
+    {Schedule::Lunbrex,          "Lunbrex"},
+    {Schedule::ScorpiiCycle,     "ScorpiiCycle"},
+    // GameConiunctrix (Moon Conjunctions)
+    {Schedule::CrucixAurix,      "CrucixAurix"},
+    {Schedule::LunixSanguex,     "LunixSanguex"},
+    // GameTemporix (Seasons ~2 weeks real-time)
+    {Schedule::Temporix,         "Temporix"},
+    {Schedule::GlacixUmbrae,     "GlacixUmbrae"},
+    {Schedule::IgnixVertum,      "IgnixVertum"},
+    {Schedule::HalitrixNebulox,  "HalitrixNebulox"},
+    {Schedule::SaltatrixMortum,  "SaltatrixMortum"},
+    // GameStellar (Stellar cycles)
+    {Schedule::PulsatrixAntarix, "PulsatrixAntarix"},
+    {Schedule::CyclumArcturix,   "CyclumArcturix"},
+    {Schedule::TrinitaxLuminex,  "TrinitaxLuminex"},
+    // GameVectum (1 VECTUM = 4021 TUMBRAE = 56 days)
+    {Schedule::VectumMortis,     "VectumMortis"},
+    {Schedule::NewVectum,        "NewVectum"},
+    // GameTenebrax (The Great Darkness)
+    {Schedule::TenebraxMagnorum, "TenebraxMagnorum"},
+    // GameAetrix (Epochs)
+    {Schedule::AetrixMinorum,    "AetrixMinorum"},
+    {Schedule::AetrixMaiorum,    "AetrixMaiorum"},
+    // GameAevrix (Aeon)
+    {Schedule::Aevrix,           "Aevrix"},
+};
+
+/** Number of named schedules. Bound to the table, so it can never drift from it. */
+inline constexpr uint32_t kScheduleNameCount =
+    static_cast<uint32_t>(sizeof(kScheduleNames) / sizeof(kScheduleNames[0]));
+
+// The count is a fact about the tier structure, not a free number: 42 real-time schedules
+// across 15 tiers plus 24 game-time schedules across 10. If this assert fires, a row was added
+// or lost, and the tier comments above say which block it belongs to.
+static_assert(kScheduleNameCount == 66, "schedule name table lost or gained a row");
+
+/**
+ * @brief Get schedule name as text (for logging).
+ * @param s The schedule to query
+ * @return the name, or "Unknown" for a value that carries no row
+ *
+ * Returns const char*, not a string_view: this is Layer 1, and the callers append the result
+ * to a std::string or hand it to a log format — both take a bare pointer without a detour.
+ *
+ * The scan is linear over 66 rows and that is deliberate. All four call sites are diagnostic
+ * (boot table, dependency-cycle error) and none of them runs inside a tick; in a constant
+ * expression the loop costs nothing at all, because it never reaches runtime.
+ */
+[[nodiscard]] constexpr const char* schedule_name(Schedule s) noexcept {
+    for (const ScheduleNameRow& row : kScheduleNames) {
+        if (row.value == s) {
+            return row.name;
+        }
     }
+    return "Unknown";
 }
 
 }  // namespace ase::ecs
 
-// =============================================================================
-// STD HASH SPECIALIZATION
-// =============================================================================
-
-namespace std {
-
-/**
- * @brief Hash specialization for Schedule (required for unordered_map)
- */
-template<>
-struct hash<ase::ecs::Schedule> {
-    [[nodiscard]] size_t operator()(ase::ecs::Schedule s) const noexcept {
-        return hash<uint8_t>{}(static_cast<uint8_t>(s));
-    }
-};
-
-}  // namespace std
+// Hier stand eine Spezialisierung von std::hash fuer Schedule. Ihr eigener Kommentar nannte
+// ihren Zweck — "required for unordered_map" — und damit auch den Grund, warum sie weg ist:
+// den Behaeltertyp, fuer den sie gebraucht wurde, gibt es in diesem Baum nicht mehr, seit
+// ase-containers ihn ersetzt hat.
+//
+// GEMESSEN vor dem Loeschen: baumweit kein einziger Treffer auf unordered_map<Schedule>,
+// unordered_set<Schedule> oder hash<Schedule> ausser der Spezialisierung selbst. Sie hat
+// keinen Nutzer und kann keinen bekommen, ohne dass jemand zuerst den verbotenen Behaelter
+// zurueckholt.

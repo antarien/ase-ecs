@@ -1,15 +1,49 @@
+/**
+ * ASE CORE INFRASTRUCTURE IMPLEMENTATION
+ *
+ * @file        shutdown_sequence.cpp
+ * @brief       Shutdown sequence visualization with colored output
+ * @description Draws the shutdown progress in reverse registration order.
+ *              Like boot_logger.cpp this file is a TERMINAL RENDERER, not a
+ *              log site: it writes an aligned, coloured table straight to the
+ *              terminal, and routing it through ase::log would prefix every
+ *              row with timestamp, level and category and break the columns.
+ *              Internal implementation detail of ase-ecs.
+ *
+ * @module      ase-ecs
+ * @layer       1 (Core)
+ * @category    process/computation
+ * @created     2026-02-01
+ * @modified    2026-08-20
+ * @version     1.0.0
+ *
+ * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
+ *
+ * [ ] NOT an ECS System implementation
+ * [ ] Layer dependencies correct (L0: no ASE deps, L1: L0 only)
+ * [ ] Own header included FIRST
+ * [ ] No global mutable state
+ * [ ] No static initialization order fiasco
+ * [ ] Thread-safe implementations (pure or mutex-protected)
+ * [ ] All error conditions handled
+ * [ ] No exceptions thrown (use Result<T> pattern)
+ * [ ] Implementation details in anonymous namespace
+ * [ ] No inline implementations of template specializations here
+ * [ ] Platform-specific code isolated and documented
+ * [ ] Performance-critical code profiled and optimized
+ */
+
 #include <ase/ecs/internal/shutdown_sequence.hpp>
 #include <ase/ecs/internal/terminal_utils.hpp>
 #include <ase/log/log.hpp>
 #include <ase/log/log_module.hpp>
 #include <ase/log/colors.hpp>
 
-#include <spdlog/sinks/base_sink.h>
-#include <iomanip>
-#include <iostream>
-#include <mutex>
-#include <sstream>
-#include <thread>
+#include <ase/platform/sleep.hpp>
+#include <ase/utils/clock.hpp>
+
+#include <cstdio>
+#include <string>
 #include <ase/containers/hash_map.hpp>
 #include <ase/containers/vector.hpp>
 
@@ -17,29 +51,17 @@ namespace ase::ecs::internal {
 
 namespace {
 
-// Queue sink that captures log messages during shutdown
-template<typename Mutex>
-class ShutdownQueueSink : public spdlog::sinks::base_sink<Mutex> {
-public:
-    struct LogEntry {
-        spdlog::level::level_enum level;
-        std::string payload;
-    };
+// Hier stand eine eigene Queue-Senke, die von der Logbibliothek erbte und den Senkenvektor des
+// Loggers von Hand austauschte. boot_logger.cpp trug dieselbe Klasse ein zweites Mal. Beide
+// sind seit 2026-08-20 durch die Klammer log::capture_begin/count/entry/end ersetzt: die
+// Senken gehoeren dem Logger, also gehoert das Umhaengen in ase-log. Ueber die Schnittstelle
+// kommt kein Typ der Logbibliothek mehr — eine kleine Ganzzahl fuer die Stufe, der Text durch
+// einen eigenen Puffer.
 
-    ase::containers::Vector<LogEntry>& entries() { return entries_; }
-
-protected:
-    void sink_it_(const spdlog::details::log_msg& msg) override {
-        entries_.push_back({msg.level, std::string(msg.payload.data(), msg.payload.size())});
-    }
-
-    void flush_() override {}
-
-private:
-    ase::containers::Vector<LogEntry> entries_;
-};
-
-using ShutdownQueueSinkMt = ShutdownQueueSink<std::mutex>;
+// Puffer fuer EINE abgespielte Logzeile. Die Klammer gibt die volle Laenge zurueck, auch wenn
+// sie mehr ist als hier hineinpasst; die Schleife unten vergleicht beides und haengt eine
+// Marke an, statt eine gekuerzte Zeile als vollstaendig auszugeben.
+constexpr uint32_t CAPTURE_TEXT_MAX = 1024;
 
 // Level colors and names (same as log_system.cpp)
 const char* LEVEL_COLORS[] = {
@@ -51,6 +73,19 @@ const char* LEVEL_COLORS[] = {
     "\x1b[38;5;168m", // critical
 };
 const char* LEVEL_NAMES[] = {"TRC", "DBG", "INF", "WRN", "ERR", "CRT"};
+
+// Counters are drawn zero-padded to three digits so the columns line up with the
+// boot view. A size_t prints in at most 20 digits, so this buffer holds any value
+// the padding could ever be applied to: the format WIDENS short numbers, it never
+// truncates long ones, and the line therefore stays honest for a tier with more
+// than 999 systems.
+constexpr size_t COUNTER_BUFFER_BYTES = 24;
+
+std::string padded_counter(size_t value) {
+    char buffer[COUNTER_BUFFER_BYTES];
+    std::snprintf(buffer, sizeof(buffer), "%03zu", value);
+    return std::string(buffer);
+}
 
 }  // anonymous namespace
 
@@ -65,26 +100,33 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
     size_t total = registry.total_count();
     size_t current = 0;
 
-    // Create queue sink to capture logs during shutdown
-    auto queue_sink = std::make_shared<ShutdownQueueSinkMt>();
-
-    // Store original sinks and replace with queue sink
-    ase::containers::Vector<spdlog::sink_ptr> original_sinks;
-    bool sinks_replaced = false;
-    if (log::LogSystem::logger()) {
-        original_sinks = log::LogSystem::logger()->sinks();
-        log::LogSystem::logger()->sinks().clear();
-        log::LogSystem::logger()->sinks().push_back(queue_sink);
-        sinks_replaced = true;
-    }
+    // Logausgabe umleiten, damit keine Zeile die Fortschrittstabelle unten zerreisst.
+    // Der Rueckgabewert wird nicht geprueft: false heisst "es gibt noch keinen Logger", und
+    // dann gibt es auch nichts umzuleiten — die Tabelle laeuft in beiden Faellen gleich.
+    (void)log::capture_begin();
 
     std::string line = terminal_line();
 
-    // Header
-    std::cout << "\n" << std::flush;
-    std::cout << ansi::DIM << line << ansi::RESET << "\n" << std::flush;
-    std::cout << "  ASE Shutdown Sequence " << ansi::DIM << "(" << total << " systems)" << ansi::RESET << "\n" << std::flush;
-    std::cout << ansi::DIM << line << ansi::RESET << "\n" << std::flush;
+    // Header. Same channel and same reason as boot_logger.cpp: this file replaces the
+    // ase::log sinks for the duration of the sequence and rewrites its own lines, so it
+    // draws through write_terminal instead of logging.
+    std::string header = "\n";
+    header += ansi::DIM;
+    header += line;
+    header += ansi::RESET;
+    header += "\n  ASE Shutdown Sequence ";
+    header += ansi::DIM;
+    header += "(";
+    header += std::to_string(total);
+    header += " systems)";
+    header += ansi::RESET;
+    header += "\n";
+    header += ansi::DIM;
+    header += line;
+    header += ansi::RESET;
+    header += "\n";
+    write_terminal(header);
+    flush_terminal();
 
     // Pre-calculate GLOBAL source totals (total systems per module/plugin)
     ase::containers::HashMap<std::string, size_t> global_source_totals;
@@ -95,8 +137,17 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
     // Track current index per source (for module-local counter, counting UP)
     ase::containers::HashMap<std::string, size_t> source_current_idx;
 
-    std::cout << "\n" << std::flush;
-    std::cout << "  " << ansi::BLUE << "┌─ Shutdown" << ansi::RESET << " " << ansi::DIM << "(once)" << ansi::RESET << "\n" << std::flush;
+    std::string group_header = "\n  ";
+    group_header += ansi::BLUE;
+    group_header += "┌─ Shutdown";
+    group_header += ansi::RESET;
+    group_header += " ";
+    group_header += ansi::DIM;
+    group_header += "(once)";
+    group_header += ansi::RESET;
+    group_header += "\n";
+    write_terminal(group_header);
+    flush_terminal();
 
     // Call on_stop() for ALL systems in reverse order
     std::string prev_source;
@@ -117,82 +168,178 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
 
             // Empty line between module/plugin groups
             if (!prev_source.empty() && prev_source != source) {
-                std::cout << "  " << ansi::BLUE << "│" << ansi::RESET << "\n" << std::flush;
+                std::string gap = "  ";
+                gap += ansi::BLUE;
+                gap += "│";
+                gap += ansi::RESET;
+                gap += "\n";
+                write_terminal(gap);
+                flush_terminal();
             }
             prev_source = source;
 
-            // Shutdown delay
+            // Shutdown delay. The `> 0` guard is load-bearing, same reason as in
+            // boot_logger.cpp: shutdown_delay_us is a signed int
+            // (its declaration in shutdown_sequence.hpp) and sleep_nanos takes an unsigned span, so a
+            // negative value would wrap into a sleep no operator would sit through.
             if (config.shutdown_delay_us > 0) {
-                std::this_thread::sleep_for(std::chrono::microseconds(config.shutdown_delay_us));
+                ase::platform::sleep_nanos(static_cast<uint64_t>(config.shutdown_delay_us) *
+                                           static_cast<uint64_t>(ase::utils::NANOS_PER_MICRO));
             }
 
             // Get source color (works for both ase-* modules and ase-pl-* plugins)
-            int src_color = log::get_module_color_code(source);
+            int src_color = log::get_module_color_code(source.c_str());
 
             // Build the line content
             // Count DOWN from total to 1 (shutdown is reverse order)
             size_t remaining = total - current + 1;
-            std::ostringstream line_content;
-            line_content << "  " << ansi::BLUE << "│" << ansi::RESET << " ";
+            std::string line_content;
+            line_content += "  ";
+            line_content += ansi::BLUE;
+            line_content += "│";
+            line_content += ansi::RESET;
+            line_content += " ";
 
             if (config.show_timestamps) {
-                line_content << ansi::DIM << "[" << short_timestamp() << "]" << ansi::RESET << " ";
+                line_content += ansi::DIM;
+                line_content += "[";
+                line_content += short_timestamp();
+                line_content += "]";
+                line_content += ansi::RESET;
+                line_content += " ";
             }
 
             // Counter format: [module_remaining/module_total] [global_remaining/global_total]
             std::string version = info ? info->version : "";
-            line_content << ansi::DIM << "[Down]" << ansi::RESET << " "
-                         << ansi::CYAN << "["
-                         << std::setfill('0') << std::setw(3) << module_remaining << "/"
-                         << std::setfill('0') << std::setw(3) << module_total << "]"
-                         << ansi::RESET << " "
-                         << ansi::DIM << "["
-                         << std::setfill('0') << std::setw(3) << remaining << "/"
-                         << std::setfill('0') << std::setw(3) << total << "]"
-                         << ansi::RESET << " "
-                         << "\x1b[38;5;" << src_color << "m[" << source << "]" << ansi::RESET << " ";
+            line_content += ansi::DIM;
+            line_content += "[Down]";
+            line_content += ansi::RESET;
+            line_content += " ";
+            line_content += ansi::CYAN;
+            line_content += "[";
+            line_content += padded_counter(module_remaining);
+            line_content += "/";
+            line_content += padded_counter(module_total);
+            line_content += "]";
+            line_content += ansi::RESET;
+            line_content += " ";
+            line_content += ansi::DIM;
+            line_content += "[";
+            line_content += padded_counter(remaining);
+            line_content += "/";
+            line_content += padded_counter(total);
+            line_content += "]";
+            line_content += ansi::RESET;
+            line_content += " ";
+            line_content += "\x1b[38;5;";
+            line_content += std::to_string(src_color);
+            line_content += "m[";
+            line_content += source;
+            line_content += "]";
+            line_content += ansi::RESET;
+            line_content += " ";
 
             // Show version if available, or [!] warning if missing
             if (!version.empty()) {
-                line_content << ansi::DIM << "[" << version << "]" << ansi::RESET << " ";
+                line_content += ansi::DIM;
+                line_content += "[";
+                line_content += version;
+                line_content += "]";
+                line_content += ansi::RESET;
+                line_content += " ";
             } else {
-                line_content << ansi::YELLOW << "[!]" << ansi::RESET << " ";
+                line_content += ansi::YELLOW;
+                line_content += "[!]";
+                line_content += ansi::RESET;
+                line_content += " ";
             }
 
-            std::ostringstream line_suffix;
-            line_suffix << ansi::WHITE << (*it)->name() << ansi::RESET;
+            std::string line_suffix;
+            line_suffix += ansi::WHITE;
+            line_suffix += (*it)->name();
+            line_suffix += ansi::RESET;
 
-            // Print [..] before on_stop
-            std::cout << line_content.str() << ansi::YELLOW << "[..]" << ansi::RESET << " " << line_suffix.str() << std::flush;
+            // Print [..] before on_stop. Flushed on its own - it announces a step that has
+            // not run yet, and the line below replaces exactly this one.
+            std::string pending = line_content;
+            pending += ansi::YELLOW;
+            pending += "[..]";
+            pending += ansi::RESET;
+            pending += " ";
+            pending += line_suffix;
+            write_terminal(pending);
+            flush_terminal();
 
             // Call on_stop
             (*it)->on_stop(world.registry());
 
             // Overwrite with [OK]
-            std::cout << "\r\x1b[K" << line_content.str() << ansi::OK_GREEN << "[OK]" << ansi::RESET << " " << line_suffix.str() << "\n" << std::flush;
+            std::string done = "\r\x1b[K";
+            done += line_content;
+            done += ansi::OK_GREEN;
+            done += "[OK]";
+            done += ansi::RESET;
+            done += " ";
+            done += line_suffix;
+            done += "\n";
+            write_terminal(done);
+            flush_terminal();
         }
     }
 
     // Footer
-    std::cout << "\n" << std::flush;
-    std::cout << ansi::DIM << line << ansi::RESET << "\n\n" << std::flush;
+    std::string footer = "\n";
+    footer += ansi::DIM;
+    footer += line;
+    footer += ansi::RESET;
+    footer += "\n\n";
+    write_terminal(footer);
+    flush_terminal();
 
     // Replay queued logs to stdout (LogSystem may be stopped)
-    if (!queue_sink->entries().empty()) {
-        for (const auto& entry : queue_sink->entries()) {
-            auto idx = static_cast<size_t>(entry.level);
-            if (idx >= 6) idx = 5;
+    const uint32_t captured = log::capture_count();
+    if (captured > 0u) {
+        char    text[CAPTURE_TEXT_MAX];
+        uint8_t level = 0;
 
-            std::cout << ansi::DIM << "[" << full_timestamp() << "]" << ansi::RESET << " "
-                      << "[" << LEVEL_COLORS[idx] << LEVEL_NAMES[idx] << ansi::RESET << "] "
-                      << "[ASE] [" << (world.registry().ctx().contains<ase::log::LogConfig>() ? world.registry().ctx().get<ase::log::LogConfig>().label : "SERVER") << "] " << entry.payload << "\n";
+        for (uint32_t entry_idx = 0u; entry_idx < captured; ++entry_idx) {
+            const uint32_t full = log::capture_entry(entry_idx, level, text, CAPTURE_TEXT_MAX);
+            const size_t   idx  = static_cast<size_t>(level);  // schon auf 0..5 begrenzt
+
+            std::string replay = ansi::DIM;
+            replay += "[";
+            replay += full_timestamp();
+            replay += "]";
+            replay += ansi::RESET;
+            replay += " [";
+            replay += LEVEL_COLORS[idx];
+            replay += LEVEL_NAMES[idx];
+            replay += ansi::RESET;
+            replay += "] [ASE] [";
+            replay += (world.registry().ctx().contains<ase::log::LogConfig>()
+                           ? world.registry().ctx().get<ase::log::LogConfig>().label
+                           : "SERVER");
+            replay += "] ";
+            replay += text;
+            if (full >= CAPTURE_TEXT_MAX) {
+                // Sichtbar machen statt verschweigen: die Klammer meldet die volle Laenge,
+                // also kann eine gekuerzte Zeile hier nicht als vollstaendige durchgehen.
+                replay += ansi::DIM;
+                replay += " [gekuerzt]";
+                replay += ansi::RESET;
+            }
+            replay += "\n";
+            write_terminal(replay);
         }
-        std::cout << std::flush;
+        // One flush for the whole replay, as before: the loop above deliberately did not
+        // flush per line.
+        flush_terminal();
     }
 
-    // Note: We don't restore original sinks since the app is shutting down
-    (void)original_sinks;
-    (void)sinks_replaced;
+    // Die Senken werden bewusst NICHT zurueckgestellt: der Prozess endet hier, und die
+    // Klammer hat ihren Inhalt oben bereits auf das Terminal abgespielt. Genau dafuer nimmt
+    // capture_end ein Argument — boot_logger.cpp ruft dieselbe Funktion mit true.
+    log::capture_end(false);
 }
 
 }  // namespace ase::ecs::internal

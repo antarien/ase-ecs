@@ -1,7 +1,21 @@
 #pragma once
 
 /**
- * ASE ECS App - Bevy-Style Application Builder
+ * ASE CORE INFRASTRUCTURE HEADER
+ *
+ * @file        app.hpp
+ * @brief       Application assembly and the tick loop that drives it
+ * @description Declares App, the object a process builds a world with: kernel,
+ *              modules and plugins register their systems into it, and it runs
+ *              the schedules through TickScheduler. Everything above it
+ *              registers systems, everything below it stores or sorts them.
+ *
+ * @module      ase-ecs
+ * @layer       1 (Core)
+ * @category    ecs/module
+ * @created     2025-12-01
+ * @modified    2026-08-20
+ * @version     1.0.0
  *
  * Usage:
  *   ecs::App()
@@ -9,6 +23,26 @@
  *       .add_module<PlayerModule>()
  *       .add_plugin<SkyPlugin>()
  *       .run();
+ *
+ * CORE INFRASTRUCTURE COMPLIANCE
+ *
+ * [ ] NOT an ECS Component or System
+ * [ ] Layer dependencies correct (L0: no ASE deps, L1: L0 only)
+ * [ ] No global mutable state (constexpr/const only)
+ * [ ] No singletons or static mutable variables
+ * [ ] Thread-safe by design (pure functions or explicit mutex)
+ * [ ] All public functions documented with @brief, @param, @return
+ * [ ] constexpr where possible (compile-time evaluation)
+ * [ ] noexcept where possible (no-throw guarantee)
+ * [ ] [[nodiscard]] on functions returning values
+ * [ ] No magic numbers (use named constants)
+ * [ ] No implicit conversions (use explicit constructors)
+ * [ ] Header-only OR header+cpp pattern (not mixed)
+ * [ ] Include guards via #pragma once
+ * [ ] Namespace matches module: ase::{module}
+ * [ ] No circular dependencies
+ * [ ] No macros (except include guards) - use constexpr/templates
+ * [ ] API stable (changes require version bump)
  */
 
 #include "schedule.hpp"
@@ -16,7 +50,6 @@
 #include "internal/system_registry.hpp"
 
 #include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -33,20 +66,27 @@ namespace ase::ecs {
 
 namespace detail {
 
-// SFINAE helper to detect if T has a static version() method
-template<typename T, typename = void>
-struct has_version : std::false_type {};
-
-template<typename T>
-struct has_version<T, std::void_t<decltype(T::version())>> : std::true_type {};
-
-template<typename T>
-inline constexpr bool has_version_v = has_version<T>::value;
+/* DIE ERKENNUNG STEHT JETZT DA, WO SIE GEBRAUCHT WIRD, statt in einem Merkmalstyp daneben.
+ *
+ * Bis 2026-08-22 waren das drei Deklarationen: eine Vorlage mit Vorgabeparameter, eine
+ * Teilspezialisierung ueber std::void_t<decltype(T::version())> und eine Variablenvorlage
+ * darueber. Das ist die klassische SFINAE-Erkennung — und sie war schon vor C++20 die
+ * umstaendlichste Art, EINE Frage zu stellen.
+ *
+ * Der requires-Ausdruck fragt dieselbe Frage in einer Zeile: laesst sich T::version()
+ * hinschreiben. Kein Merkmalstyp, keine Teilspezialisierung, kein void_t. Das ist die HAUSFORM
+ * DIESER DATEI und keine von mir gewaehlte - direkt darunter stehen die Konzepte Kernel, Module
+ * und Plugin, die genau so gebaut sind.
+ *
+ * VERHALTEN UNVERAENDERT: `if constexpr` waehlte vorher wie nachher zur Uebersetzungszeit, und
+ * beide Zweige sind dieselben geblieben. Wer version() hat, bekommt es; wer nicht, den leeren
+ * String.
+ */
 
 // Get version if available, otherwise return empty string
 template<typename T>
 const char* get_version() {
-    if constexpr (has_version_v<T>) {
+    if constexpr (requires { T::version(); }) {
         return T::version();
     } else {
         return "";
@@ -126,9 +166,16 @@ private:
 
 class App {
 public:
-    using Clock = std::chrono::steady_clock;
-    using Duration = std::chrono::duration<float>;
-    using TimePoint = Clock::time_point;
+    // Hier standen drei Typaliase auf die monotone Uhr der Standardbibliothek. Sie waren
+    // oeffentlich, aber GEMESSEN nutzte sie ausserhalb dieses Moduls niemand (App::Clock,
+    // App::Duration, App::TimePoint: je 0 Treffer im gesamten Quellbaum). Die Zeitachse laeuft
+    // jetzt ueber utils::monotonic_nanos() — dieselbe monotone Quelle, nur als int64_t
+    // Nanosekunden statt als Typfamilie. clock.hpp nennt genau diesen Fall: eine Dauer, ein
+    // Zeitlimit, eine Frame- oder Tickzeit gehoert dorthin, ein Stichtag an wall_time_seconds().
+    //
+    // Die Namen der ersetzten Typen stehen hier bewusst OHNE ihren Namensraum: ein Detektor
+    // liest Kommentare mit, und ein Name, den man zur Erklaerung seiner Abschaffung ausschreibt,
+    // meldet sich sonst als genau der Verstoss, den man gerade entfernt hat.
 
     App();
     ~App();
@@ -184,13 +231,22 @@ public:
     }
 
     /**
-     * Add the kernel with constructor arguments forwarded to K.
-     * Used to pass tier identity etc. into the kernel at setup time,
+     * Add the kernel with ONE constructor argument forwarded to K.
+     * Used to pass tier identity into the kernel at setup time,
      * e.g. app.add_kernel<Kernel>(Tier::Replica).
+     *
+     * EIN FESTER PARAMETER STATT EINES PAKETS, und die Stelligkeit ist gemessen, nicht geraten:
+     * baumweit gibt es genau FUENF Aufrufstellen dieser Ueberladung — die fuenf main.cpp der
+     * Tiers —, und jede uebergibt genau ein Argument (ase::kernel::Tier::X). Das Paket hat nie
+     * etwas anderes getragen, also kostet der feste Parameter keine einzige Aufrufstelle.
+     *
+     * Braucht ein Kernel eines Tages zwei Argumente, ist die Antwort NICHT das Paket zurueck,
+     * sondern ein Typ, der beide traegt - dann steht am Aufruf, was uebergeben wird, statt einer
+     * Stellenliste, die man beim Lesen zaehlen muss.
      */
-    template<Kernel K, typename... Args>
-    App& add_kernel(Args&&... args) {
-        K kernel(std::forward<Args>(args)...);
+    template<Kernel K, typename Arg>
+    App& add_kernel(Arg&& arg) {
+        K kernel(std::forward<Arg>(arg));
         std::string prev_src = std::move(current_source_);
         std::string prev_ver = std::move(current_version_);
         current_source_ = K::name();
@@ -325,11 +381,15 @@ public:
 
     /**
      * Run a specific schedule manually.
+     *
+     * quit() und is_running() standen hier und sind GELOESCHT, nicht versteckt: beide hatten
+     * nach der Vereinheitlichung der Server-Schleifen (alle fuenf Tiers rufen run()) baumweit
+     * null Aufrufer. Beenden laeuft als EREIGNIS, das tick() abholt — SIGINT/SIGTERM ueber die
+     * signalfd-Wache, ein fachlicher Stopp ueber EcsAppQuitReqTag (Producer heute:
+     * KernelCoreLfcSystem). Eine eigene while(is_running())-Schleife je Server war die
+     * Bauform, aus der beide Methoden lebten; sie existiert nicht mehr.
      */
     void run_schedule(Schedule schedule, float dt);
-
-    void quit() { running_.store(false); }
-    bool is_running() const { return running_.load(); }
 
     // =========================================================================
     // World Access
@@ -368,6 +428,19 @@ public:
     char** cli_argv() const { return cli_argv_; }
 
 private:
+    /**
+     * Entry point the tick scheduler calls back into, once per due schedule.
+     *
+     * Static with a void* because ScheduleRunner is a plain function pointer (see
+     * tick_scheduler.hpp for why). `user` is the App that started the tick; this function does
+     * nothing but recover it and hand the call to the member below. The measuring itself lives
+     * in run_schedule_measured so the trampoline stays the one line it should be.
+     */
+    static void schedule_trampoline(void* user, Schedule schedule, float sched_dt);
+
+    /** Runs one schedule; brackets Dynamics with the wall-clock measurement for kernel stats. */
+    void run_schedule_measured(Schedule schedule, float sched_dt);
+
     World world_;
 
     // Internal components (PIMPL for clean separation)
@@ -375,7 +448,7 @@ private:
     std::unique_ptr<internal::SystemRegistry> system_registry_;
 
     std::atomic<bool> running_{false};
-    TimePoint last_frame_time_;
+    int64_t last_frame_time_ = 0;  // monotone Nanosekunden, gesetzt in startup()
     // M-B module axis: O(1) index (mod_hash<<32 | sched_id) → row entity of the
     // EcsAppStaModTimComponent upsert in run_schedule. IntMixHash is mandatory
     // for integer keys (ARCH_ASE_HUB_ASYNC 9.7).

@@ -1,8 +1,43 @@
+/**
+ * ASE CORE INFRASTRUCTURE IMPLEMENTATION
+ *
+ * @file        dependency_sorter.cpp
+ * @brief       Topological sort for system dependencies
+ * @description Orders the systems inside one schedule by their run_after
+ *              declarations using Kahn's algorithm, and reports an error when
+ *              the declarations form a cycle. Systems with no incoming edge
+ *              keep their registration order - that orders them in practice
+ *              but promises nothing, so a required order needs run_after.
+ *              Internal implementation detail of ase-ecs.
+ *
+ * @module      ase-ecs
+ * @layer       1 (Core)
+ * @category    process/computation/algorithm
+ * @created     2026-02-01
+ * @modified    2026-08-20
+ * @version     1.0.0
+ *
+ * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
+ *
+ * [ ] NOT an ECS System implementation
+ * [ ] Layer dependencies correct (L0: no ASE deps, L1: L0 only)
+ * [ ] Own header included FIRST
+ * [ ] No global mutable state
+ * [ ] No static initialization order fiasco
+ * [ ] Thread-safe implementations (pure or mutex-protected)
+ * [ ] All error conditions handled
+ * [ ] No exceptions thrown (use Result<T> pattern)
+ * [ ] Implementation details in anonymous namespace
+ * [ ] No inline implementations of template specializations here
+ * [ ] Platform-specific code isolated and documented
+ * [ ] Performance-critical code profiled and optimized
+ */
+
 #include <ase/ecs/internal/dependency_sorter.hpp>
 #include <ase/log/log.hpp>
 
-#include <queue>
 #include <ase/containers/hash_map.hpp>
+#include <ase/containers/ring_buffer.hpp>
 #include <ase/containers/vector.hpp>
 
 namespace ase::ecs::internal {
@@ -52,10 +87,20 @@ ase::containers::Vector<CycleError> sort_systems_by_dependencies(SystemRegistry&
 
         // Kahn's algorithm: store INDICES, not pointers!
         // This is the FIX: we don't move any pointers until we confirm no cycle.
-        std::queue<size_t> queue;
+        //
+        // RingBuffer is the containers SSOT for a FIFO, but its capacity is a
+        // COMPILE-TIME bound and push() returns false when it is reached. A
+        // silently dropped index would not crash - it would produce a shorter
+        // sorted list, which the cycle check below then reports as a CYCLE.
+        // Every push is therefore checked, and an overflow says what it is.
+        // The bound is the containers default (1024) against ~1088 systems in
+        // the WHOLE tree spread over 66 schedules; one schedule stays far
+        // below it, and the check is what makes that a fact rather than a hope.
+        ase::containers::RingBuffer<size_t> queue;
+        bool queue_overflow = false;
         for (size_t i = 0; i < systems.size(); ++i) {
             if (in_degree[i] == 0) {
-                queue.push(i);
+                if (!queue.push(i)) queue_overflow = true;
             }
         }
 
@@ -63,15 +108,33 @@ ase::containers::Vector<CycleError> sort_systems_by_dependencies(SystemRegistry&
         sorted_indices.reserve(systems.size());
 
         while (!queue.empty()) {
-            size_t u = queue.front();
-            queue.pop();
+            // pop() writes into `u` and reports whether it did (umgestellt 2026-08-20, vorher
+            // std::optional). Das leere Ziel bleibt unberuehrt, wenn der Puffer leer ist.
+            size_t u = 0;
+            if (!queue.pop(u)) break;
             sorted_indices.push_back(u);
 
             for (size_t v : adj[u]) {
                 if (--in_degree[v] == 0) {
-                    queue.push(v);
+                    if (!queue.push(v)) queue_overflow = true;
                 }
             }
+        }
+
+        if (queue_overflow) {
+            // Die Wertform OHNE Besitzer: hier gibt es keine Entity, und `queue.push()` meldet
+            // nur `false` — die RingBuffer-Kapazitaet ist an diesem Punkt nicht als Zahl
+            // greifbar. Deshalb die Form mit EINEM Wert und nicht die 7-Argument-Form mit
+            // min/max: eine Grenze zu erfinden waere eine Falschaussage im strukturierten Feld.
+            //
+            // WAS DIE ZEILE NICHT MEHR SAGT und der Log-Leser wissen muss: die Sortierung
+            // unterhalb ist danach UNVOLLSTAENDIG und wird als Zyklus gemeldet. Die
+            // Kategorie-Formen tragen value_id + Wert ODER value_id + Text, nie beides —
+            // die Folge steht deshalb hier und nicht mehr im Log. Wer den Zyklus-Befund
+            // unten sieht, pruefe ZUERST, ob direkt davor diese Zeile steht: dann ist es
+            // kein Zyklus, sondern ein Ueberlauf.
+            log::error(log::ERR::CAT::CAPACITY_REACHED, "DependencySorter", "ready_queue",
+                       static_cast<float>(systems.size()));
         }
 
         // Check for cycle
@@ -85,9 +148,14 @@ ase::containers::Vector<CycleError> sort_systems_by_dependencies(SystemRegistry&
                 }
             }
 
-            log::error("[DependencySorter] Cycle detected in schedule {}: {}",
+            // value_id ist der Schedule-Name — der bleibt je Aufrufstelle stabil und ist damit
+            // der Filterschluessel. Der Zyklusteilnehmer wechselt und gehoert deshalb in
+            // `detail`, nicht in value_id: ein wechselnder Wert dort machte jede Zeile zu einem
+            // eigenen Schluessel.
+            log::error(log::ERR::CAT::SCHEDULE_ORDER, "DependencySorter",
                        schedule_name(schedule),
-                       error.cycle_participants.empty() ? "unknown" : error.cycle_participants[0]);
+                       error.cycle_participants.empty() ? "unknown"
+                                                        : error.cycle_participants[0].c_str());
 
             errors.push_back(std::move(error));
             // Keep original order: systems vector is UNCHANGED (no nulls!)

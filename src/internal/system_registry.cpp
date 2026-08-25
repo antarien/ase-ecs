@@ -1,3 +1,36 @@
+/**
+ * ASE CORE INFRASTRUCTURE IMPLEMENTATION
+ *
+ * @file        system_registry.cpp
+ * @brief       System storage and metadata management
+ * @description Holds the systems grouped by schedule together with their
+ *              metadata. Every lookup is O(1) through hash maps that are
+ *              filled at insert time rather than searched at call time.
+ *              Internal implementation detail of ase-ecs.
+ *
+ * @module      ase-ecs
+ * @layer       1 (Core)
+ * @category    structure/datatype
+ * @created     2026-02-01
+ * @modified    2026-08-20
+ * @version     1.0.0
+ *
+ * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
+ *
+ * [ ] NOT an ECS System implementation
+ * [ ] Layer dependencies correct (L0: no ASE deps, L1: L0 only)
+ * [ ] Own header included FIRST
+ * [ ] No global mutable state
+ * [ ] No static initialization order fiasco
+ * [ ] Thread-safe implementations (pure or mutex-protected)
+ * [ ] All error conditions handled
+ * [ ] No exceptions thrown (use Result<T> pattern)
+ * [ ] Implementation details in anonymous namespace
+ * [ ] No inline implementations of template specializations here
+ * [ ] Platform-specific code isolated and documented
+ * [ ] Performance-critical code profiled and optimized
+ */
+
 #include <ase/ecs/internal/system_registry.hpp>
 
 #include <ase/types/region_wire.hpp>

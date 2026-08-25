@@ -1,7 +1,7 @@
 #pragma once
 
 /**
- * ASE ECS Internal - Terminal Utilities
+ * ASE CORE INFRASTRUCTURE HEADER
  *
  * @file        terminal_utils.hpp
  * @brief       ANSI colors, timestamps, terminal width detection
@@ -10,7 +10,30 @@
  *
  * @module      ase-ecs
  * @layer       1 (Core)
+ * @category    process/computation
  * @created     2026-02-01
+ * @modified    2026-08-20
+ * @version     1.0.0
+ *
+ * CORE INFRASTRUCTURE COMPLIANCE
+ *
+ * [ ] NOT an ECS Component or System
+ * [ ] Layer dependencies correct (L0: no ASE deps, L1: L0 only)
+ * [ ] No global mutable state (constexpr/const only)
+ * [ ] No singletons or static mutable variables
+ * [ ] Thread-safe by design (pure functions or explicit mutex)
+ * [ ] All public functions documented with @brief, @param, @return
+ * [ ] constexpr where possible (compile-time evaluation)
+ * [ ] noexcept where possible (no-throw guarantee)
+ * [ ] [[nodiscard]] on functions returning values
+ * [ ] No magic numbers (use named constants)
+ * [ ] No implicit conversions (use explicit constructors)
+ * [ ] Header-only OR header+cpp pattern (not mixed)
+ * [ ] Include guards via #pragma once
+ * [ ] Namespace matches module: ase::{module}
+ * [ ] No circular dependencies
+ * [ ] No macros (except include guards) - use constexpr/templates
+ * [ ] API stable (changes require version bump)
  */
 
 #include <string>
@@ -63,6 +86,36 @@ constexpr size_t SOURCE_COLOR_COUNT = sizeof(SOURCE_COLORS) / sizeof(SOURCE_COLO
 // =============================================================================
 // TERMINAL FUNCTIONS
 // =============================================================================
+
+/**
+ * Write text to the terminal unchanged - no prefix, no newline, no level.
+ *
+ * THE ONE CHANNEL BY WHICH ase-ecs REACHES THE TERMINAL, and it is deliberately not
+ * ase::log. Its two callers draw: boot_logger.cpp rewrites a printed "[..]" line into
+ * "[OK]" with a carriage return and an erase sequence, and it CLEARS the ase::log sinks for
+ * the duration of the boot block (boot_logger.cpp detaches console, file, HTTP-ring and
+ * counting sinks and restores them afterwards) so no log
+ * record can interleave with the table. A line sent through ase::log during that window
+ * would land in the queue this file just installed, not on the screen - and would arrive
+ * prefixed with level, timestamp and category into an aligned, box-drawn table.
+ *
+ * fwrite is the primitive because printf, fprintf, sprintf and the three std streams each
+ * carry a rule and fwrite carries none - the same line the tree drew in
+ * tools/ase-cli/src/main.cpp and in core/ase-convert/include/ase/convert/console.hpp.
+ * Log RECORDS still belong to ase::log; this pair is for drawing.
+ *
+ * @param text What the caller wants on screen. An empty string writes nothing.
+ */
+void write_terminal(const std::string& text);
+
+/**
+ * Push whatever is buffered to the terminal now.
+ *
+ * Separate from write_terminal so a caller that emits several pieces of one line pays for
+ * one flush rather than one per piece. A progress line that arrives after the step it
+ * announces is worse than none.
+ */
+void flush_terminal();
 
 /**
  * Get terminal width in columns.

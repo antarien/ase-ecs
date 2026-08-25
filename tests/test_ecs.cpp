@@ -1,12 +1,70 @@
 /**
  * ASE ECS Module Tests
+ *
+ * WHY THIS FILE USES CHECK AND NOT assert() - measured 2026-08-20:
+ *
+ *   All five compile_commands.json of the servers carry -O3 -DNDEBUG; 141 of 141 test
+ *   translation units, not one without. Under NDEBUG assert() expands to nothing, so all
+ *   21 checks in this file were empty statements in the built configuration. It printed
+ *   "All Tests Passed" while checking nothing, and main() returned 0 unconditionally.
+ *
+ *   The four [[maybe_unused]] markers that stood on pos, name, vel and e2 were the SYMPTOM:
+ *   those variables were unused precisely because their only use sat inside a compiled-away
+ *   assert. They are gone with the cause - CHECK uses the variables for real.
+ *
+ * WHY NOT doctest, which 97 of 113 module test files use: this target links only ase::ecs
+ * (core/ase-ecs/CMakeLists.txt:131-133), it has no doctest dependency. Adding one is a build
+ * wiring decision, not something to slip into a test conversion - it is reported as an open
+ * item instead. CHECK below is the form for files without doctest; it survives NDEBUG, names
+ * the failing expression with its line, and main() returns the failure count.
+ *
+ * ALMOST NOTHING HERE IS DECIDABLE AT COMPILE TIME, unlike the component tests in other
+ * modules: Position and Velocity are local test structs with NO default member initialisers
+ * (`float x, y, z;`), so there is no zero-initialisation to state. Only the Tag is - see the
+ * single static_assert below. Forcing more would mean inventing properties this file does
+ * not test.
+ *
+ * IF A CHECK TURNS RED ON THE FIRST REAL RUN, THAT IS A FINDING, NOT A REGRESSION. The checks
+ * were never executed; a failure appearing now was already failing, silently, for as long as
+ * the build has carried -DNDEBUG. Do not "fix" it by weakening the check.
  */
 
 #include <ase/ecs/system.hpp>
+// app.hpp joined system.hpp on 2026-08-20: World's system container was deleted, and App is
+// where systems are registered and run - here as in the 1725 module and plugin files that
+// already did it this way. This test was the only caller World's container ever had.
+#include <ase/ecs/app.hpp>
+// Core tag - moved out of system.hpp on 2026-08-22, needs its own include now
+#include <ase/ecs/components/tag/ecs_dty_tag.hpp>
+#include <cmath>
 #include <iostream>
-#include <cassert>
+#include <type_traits>
 
 using namespace ase::ecs;
+
+// ============================================================================
+// Test Utilities
+// ============================================================================
+
+namespace {
+int g_failures = 0;
+}  // namespace
+
+// The replacement for assert(): NOT compiled away under NDEBUG, and it reports the
+// expression that failed together with its line instead of only aborting.
+#define CHECK(expr) do { \
+    if (!(expr)) { \
+        ++g_failures; \
+        std::cout << "\n    FAIL " << __FILE__ << ":" << __LINE__ << "  " #expr; \
+    } \
+} while(0)
+
+#define RUN_TEST(fn) do { \
+    std::cout << "Running " #fn "... "; \
+    const int before = g_failures; \
+    fn(); \
+    std::cout << (g_failures == before ? "OK\n" : "\n  FAILED\n"); \
+} while(0)
 
 // Test components
 struct Position {
@@ -21,6 +79,12 @@ struct Name {
     std::string value;
 };
 
+// A Tag carries no data - the one property of this file decidable while building. The type itself
+// comes from the include at the top of this file, NOT from a local struct: it is the real core tag
+// ase::ecs::EcsDtyTag, so this assertion states something about production code rather than about a
+// test-local copy that could drift away from it.
+static_assert(std::is_empty_v<EcsDtyTag>);
+
 // Test system
 class MovementSystem : public System {
 public:
@@ -32,35 +96,32 @@ public:
             pos.x += vel.x * dt;
             pos.y += vel.y * dt;
             pos.z += vel.z * dt;
-            ++ticked_;
         }
     }
-
-    int ticked_ = 0;
 };
 
-void test_entity_creation() {
-    std::cout << "Testing Entity Creation..." << std::endl;
+// `int ticked_ = 0;` STOOD HERE AND IS GONE. It was a member variable in a System — the exact
+// thing the STATELESS rule forbids, sitting in the ECS's own test as an example to copy.
+// The assertion it carried, CHECK(movement.ticked_ == 1), was already subsumed: the same test
+// checks that x moves from 0 to 1.0 after one tick and to 2.0 after the second. A counter that
+// only confirms what the position already proves is not coverage, it is a second thermometer.
 
+void test_entity_creation() {
     World world;
 
     auto e1 = world.create();
-    [[maybe_unused]] auto e2 = world.create();
+    auto e2 = world.create();
 
-    assert(world.valid(e1));
-    assert(world.valid(e2));
-    assert(e1 != e2);
+    CHECK(world.valid(e1));
+    CHECK(world.valid(e2));
+    CHECK(e1 != e2);
 
     world.destroy(e1);
-    assert(!world.valid(e1));
-    assert(world.valid(e2));
-
-    std::cout << "  PASSED" << std::endl;
+    CHECK(!world.valid(e1));
+    CHECK(world.valid(e2));
 }
 
 void test_components() {
-    std::cout << "Testing Components..." << std::endl;
-
     World world;
 
     auto entity = world.create();
@@ -70,33 +131,29 @@ void test_components() {
     world.emplace<Name>(entity, "Player1");
 
     // Check has
-    assert(world.has<Position>(entity));
-    assert(world.has<Name>(entity));
-    assert(!world.has<Velocity>(entity));
+    CHECK(world.has<Position>(entity));
+    CHECK(world.has<Name>(entity));
+    CHECK(!world.has<Velocity>(entity));
 
     // Get components
-    [[maybe_unused]] auto& pos = world.get<Position>(entity);
-    assert(pos.x == 1.0f);
-    assert(pos.y == 2.0f);
-    assert(pos.z == 3.0f);
+    auto& pos = world.get<Position>(entity);
+    CHECK(pos.x == 1.0f);
+    CHECK(pos.y == 2.0f);
+    CHECK(pos.z == 3.0f);
 
-    [[maybe_unused]] auto& name = world.get<Name>(entity);
-    assert(name.value == "Player1");
+    auto& name = world.get<Name>(entity);
+    CHECK(name.value == "Player1");
 
     // Try get
-    [[maybe_unused]] auto* vel = world.try_get<Velocity>(entity);
-    assert(vel == nullptr);
+    auto* vel = world.try_get<Velocity>(entity);
+    CHECK(vel == nullptr);
 
     // Remove component
     world.remove<Name>(entity);
-    assert(!world.has<Name>(entity));
-
-    std::cout << "  PASSED" << std::endl;
+    CHECK(!world.has<Name>(entity));
 }
 
 void test_views() {
-    std::cout << "Testing Views..." << std::endl;
-
     World world;
 
     // Create entities with different components
@@ -112,60 +169,53 @@ void test_views() {
     world.emplace<Position>(e3, 20.0f, 0.0f, 0.0f);
     // No velocity
 
-    // View with Position and Velocity
+    // View with Position and Velocity. The lambda parameters stay UNNAMED rather than being
+    // cast to (void): the loop counts rows, it does not read them.
     int count = 0;
-    world.view<Position, Velocity>().each([&](auto entity, auto& pos, auto& vel) {
+    world.view<Position, Velocity>().each([&](auto, auto&, auto&) {
         ++count;
     });
-    assert(count == 2);
+    CHECK(count == 2);
 
     // View with just Position
     count = 0;
-    world.view<Position>().each([&](auto entity, auto& pos) {
+    world.view<Position>().each([&](auto, auto&) {
         ++count;
     });
-    assert(count == 3);
-
-    std::cout << "  PASSED" << std::endl;
+    CHECK(count == 3);
 }
 
 void test_systems() {
-    std::cout << "Testing Systems..." << std::endl;
-
-    World world;
-
-    // Add system
-    auto& movement = world.add_system<MovementSystem>();
+    // App, not World: World's system container was deleted on 2026-08-20 and this test was its
+    // only caller. Registration now names a Schedule instead of an implicit int phase, which is
+    // what production does everywhere - Dynamics is the movement tier (30 Hz, fixed step).
+    App app;
+    app.add_system<MovementSystem>(Schedule::Dynamics);
 
     // Create entity
-    auto entity = world.create();
-    world.emplace<Position>(entity, 0.0f, 0.0f, 0.0f);
-    world.emplace<Velocity>(entity, 10.0f, 0.0f, 0.0f);
+    Registry& registry = app.registry();
+    auto entity = registry.create();
+    registry.emplace<Position>(entity, 0.0f, 0.0f, 0.0f);
+    registry.emplace<Velocity>(entity, 10.0f, 0.0f, 0.0f);
 
-    // Tick (systems are ticked automatically)
-    world.tick(0.1f);
+    // Run the one schedule the system sits in
+    app.run_schedule(Schedule::Dynamics, 0.1f);
 
     // Check position changed
-    auto& pos = world.get<Position>(entity);
-    assert(std::abs(pos.x - 1.0f) < 0.001f);
+    auto& pos = registry.get<Position>(entity);
+    CHECK(std::abs(pos.x - 1.0f) < 0.001f);
 
-    assert(movement.ticked_ == 1);
-
-    // Tick again
-    world.tick(0.1f);
-    assert(std::abs(pos.x - 2.0f) < 0.001f);
-
-    std::cout << "  PASSED" << std::endl;
+    // Run again
+    app.run_schedule(Schedule::Dynamics, 0.1f);
+    CHECK(std::abs(pos.x - 2.0f) < 0.001f);
 }
 
 void test_tags() {
-    std::cout << "Testing Tags..." << std::endl;
-
     World world;
 
     auto e1 = world.create();
     world.emplace<Position>(e1, 0.0f, 0.0f, 0.0f);
-    world.emplace<Dirty>(e1);  // Tag
+    world.emplace<EcsDtyTag>(e1);  // Tag
 
     auto e2 = world.create();
     world.emplace<Position>(e2, 1.0f, 0.0f, 0.0f);
@@ -173,31 +223,36 @@ void test_tags() {
 
     // Count dirty entities
     int dirty_count = 0;
-    world.view<Position, Dirty>().each([&](auto entity, auto& pos) {
+    world.view<Position, EcsDtyTag>().each([&](auto, auto&) {
         ++dirty_count;
     });
-    assert(dirty_count == 1);
+    CHECK(dirty_count == 1);
 
     // Remove dirty tag
-    world.remove<Dirty>(e1);
+    world.remove<EcsDtyTag>(e1);
     dirty_count = 0;
-    world.view<Position, Dirty>().each([&](auto entity, auto& pos) {
+    world.view<Position, EcsDtyTag>().each([&](auto, auto&) {
         ++dirty_count;
     });
-    assert(dirty_count == 0);
-
-    std::cout << "  PASSED" << std::endl;
+    CHECK(dirty_count == 0);
 }
 
 int main() {
     std::cout << "=== ASE ECS Module Tests ===" << std::endl;
 
-    test_entity_creation();
-    test_components();
-    test_views();
-    test_systems();
-    test_tags();
+    RUN_TEST(test_entity_creation);
+    RUN_TEST(test_components);
+    RUN_TEST(test_views);
+    RUN_TEST(test_systems);
+    RUN_TEST(test_tags);
 
+    // The exit code is the result. The old main() returned 0 unconditionally and printed
+    // "All Tests Passed" whether or not anything had been checked - which, under NDEBUG,
+    // was never.
+    if (g_failures != 0) {
+        std::cout << "\n=== " << g_failures << " check(s) FAILED ===\n";
+        return 1;
+    }
     std::cout << "\n=== All Tests Passed ===" << std::endl;
     return 0;
 }
