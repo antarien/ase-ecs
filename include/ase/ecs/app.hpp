@@ -95,6 +95,20 @@ const char* get_version() {
 
 }  // namespace detail
 
+// Ebenen des Region-Domain-Gates (App::run_schedule). GENAU ZWEI, Betreiber-Festlegung
+// 2026-08-26: Vorgabe jedes Moduls und Plugins ist SIMULATION - ohne RegionRect-Coverage
+// wird sie gehalten, denn ein Knoten ohne aktive Chunks simuliert NICHTS (VIS_ASE.md:
+// Chunk-Modell und Sphaeren-Frequenzen; auch Wetter und Celestial sind Simulation und
+// laufen nur mit Coverage, in ihren langsamen Schedules). Einzige Ausnahme ist die
+// Infrastruktur, die keine Simulation ist. Die Erklaerung kommt DATENGETRIEBEN aus dem
+// Modul-Manifest (module.toml `plane`, vom Kernel vor dem Laden deklariert), nie aus Code.
+// Das Gate arbeitet ausschliesslich auf der RAUM-Achse (Coverage) - nie auf Projekt- oder
+// Tenant-Achsen: das Silo-Modell ist verboten (ARCH_ASE_TOPOLOGY.md), der Graph ist EINER,
+// und Wanderer wechseln per Region-Handoff (ReplicaHoffFlipSystem-Kette) den Simulierer,
+// nie den Zustand.
+constexpr uint8_t APP_PLANE_SIM  = 0;  // regionsgebundene Simulation (Vorgabe jedes Moduls)
+constexpr uint8_t APP_PLANE_KERN = 1;  // Infrastruktur: tickt immer (Netz, Persist, Kernel)
+
 // Forward declarations
 class App;
 class SystemBuilder;
@@ -196,6 +210,13 @@ public:
     }
 
     /**
+     * Declare the region-domain-gate plane of one module BEFORE loading it (the kernel
+     * reads the value from the module manifest). Undeclared modules default to
+     * APP_PLANE_SIM and are held by run_schedule while no RegionRect coverage stands.
+     */
+    App& declare_module_plane(std::string_view module, uint8_t plane);
+
+    /**
      * Set boot delay per system in microseconds (default: 0).
      * Use for visual boot sequence effect.
      */
@@ -224,6 +245,8 @@ public:
         std::string prev_ver = std::move(current_version_);
         current_source_ = K::name();
         current_version_ = detail::get_version<K>();
+        // Kernel-Systeme sind Infrastruktur: nie vom Region-Domain-Gate gehalten.
+        declare_module_plane(K::name(), APP_PLANE_KERN);
         kernel.build(*this);
         current_source_ = std::move(prev_src);
         current_version_ = std::move(prev_ver);
@@ -251,6 +274,8 @@ public:
         std::string prev_ver = std::move(current_version_);
         current_source_ = K::name();
         current_version_ = detail::get_version<K>();
+        // Kernel-Systeme sind Infrastruktur: nie vom Region-Domain-Gate gehalten.
+        declare_module_plane(K::name(), APP_PLANE_KERN);
         kernel.build(*this);
         current_source_ = std::move(prev_src);
         current_version_ = std::move(prev_ver);
@@ -453,6 +478,10 @@ private:
     // EcsAppStaModTimComponent upsert in run_schedule. IntMixHash is mandatory
     // for integer keys (ARCH_ASE_HUB_ASYNC 9.7).
     ase::containers::HashMap<uint64_t, Entity, ase::containers::IntMixHash> mod_tim_rows_;
+    // Flip-Gedaechtnis des Region-Domain-Gates: -1 unbekannt, 0 laufend, 1 gehalten. Das
+    // Gate selbst ist je Durchlauf zustandslos (Anker-Tag + RegionRect-Poolgroesse); dies
+    // verhindert nur, dass der Uebergang in jedem Durchlauf erneut geloggt wird.
+    int region_hold_state_ = -1;
     std::string current_source_;
     std::string current_version_;
     int boot_delay_us_ = 0;

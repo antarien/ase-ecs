@@ -36,6 +36,9 @@
 #include <ase/ecs/components/app/state/ecs_app_sta_shtd_comp.hpp>
 #include <ase/ecs/components/app/state/ecs_app_sta_tim_comp.hpp>
 #include <ase/ecs/components/app/tag/ecs_app_quit_req_tag.hpp>
+#include <ase/ecs/components/app/tag/ecs_app_rgn_gate_tag.hpp>
+// Region-Domain-Gate: die RegionRect-Nahtzeile (L0) ist das Coverage-Signal
+#include <ase/types/region_wire.hpp>
 #include <ase/log/log.hpp>
 #include <ase/ecs/internal/boot_logger.hpp>
 #include <ase/ecs/internal/dependency_sorter.hpp>
@@ -179,6 +182,11 @@ void App::finalize_system(Schedule schedule, std::unique_ptr<System> system,
     std::string ver = version.empty() ? current_version_ : std::move(version);
     system_registry_->add_system(schedule, std::move(system), std::move(name), std::move(src),
                           std::move(ver), std::move(after), priority);
+}
+
+App& App::declare_module_plane(std::string_view module, uint8_t plane) {
+    system_registry_->set_module_plane(std::string(module), plane);
+    return *this;
 }
 
 void App::startup() {
@@ -431,6 +439,43 @@ void App::run_schedule(Schedule schedule, float dt) {
     auto idx_it = idx_map.find(schedule);
     const auto& infos = system_registry_->infos();
 
+    /**
+     * REGION-DOMAIN-GATE (Betreiber-Festlegung 2026-08-26): Ein Knoten ohne eigene Region
+     * simuliert NICHTS — Vorgabe jedes Moduls und Plugins ist die SIMULATION-Ebene, und die
+     * wird ohne Coverage gehalten; nur die im Manifest erklaerte Infrastruktur
+     * (APP_PLANE_KERN) tickt immer. Das Tor sitzt HIER und nur hier: je System entscheidet
+     * die bei der Registrierung gestempelte Ebene (SystemInfo.plane, deklariert aus
+     * module.toml `plane` VOR dem Laden) — kein einziger Systemrumpf traegt eine eigene
+     * Pruefung, neue Module erben die Vorgabe ohne jede Eintragung.
+     *
+     * SCHARF ist das Tor nur, wo der Kernel des Prozesses den EcsAppRgnGateTag-Anker
+     * gestempelt hat (Tier::World — die Compute-Schicht); auf jedem anderen Tier ist die
+     * Schleife byte-identisch zum Stand ohne Tor. Coverage ist die RegionRect-Nahtzeile
+     * (L0-POD) des Zuweisungsempfaengers — die RAUM-Achse und nur sie: Projekt- oder
+     * Tenant-Filter waeren das verbotene Silo-Modell (ARCH_ASE_TOPOLOGY.md).
+     *
+     * Lifecycle-Schedules (Initialization/Configuration/Termination/Finalization) laufen
+     * auch fuer gehaltene Module: Manager-Geburt und Abbau bleiben unversehrt, gehalten
+     * wird nur die laufende Arbeit.
+     */
+    bool region_hold = false;
+    if (world_.registry().storage<EcsAppRgnGateTag>().size() > 0u) {
+        const size_t rect_rows = world_.registry().storage<types::RegionRect>().size();
+        const int hold_state = (rect_rows == 0u) ? 1 : 0;
+        if (hold_state != region_hold_state_) {
+            region_hold_state_ = hold_state;
+            if (hold_state == 1) {
+                log::info("[App] no owned RegionRect rows - SIMULATION plane held "
+                          "(lifecycle schedules excepted, KERN infrastructure keeps running)");
+            } else {
+                log::info("[App] region coverage present ({} RegionRect row(s)) - "
+                          "SIMULATION plane running",
+                          rect_rows);
+            }
+        }
+        region_hold = (hold_state == 1) && !is_lifecycle_schedule(schedule);
+    }
+
     ase::containers::Vector<uint32_t> pass_hash;
     ase::containers::Vector<uint32_t> pass_grp;
     ase::containers::Vector<uint64_t> pass_us;
@@ -440,15 +485,22 @@ void App::run_schedule(Schedule schedule, float dt) {
         if (!system || !system->enabled()) {
             continue;
         }
+        const internal::SystemInfo* gate_info = nullptr;
+        if (idx_it != idx_map.end() && i < idx_it->second.size()) {
+            gate_info = &infos[idx_it->second[i]];
+        }
+        if (region_hold && gate_info != nullptr && gate_info->plane == APP_PLANE_SIM) {
+            continue;  // held plane: no coverage, no work - the gate, not the system, decides
+        }
         const int64_t sys_begin = utils::monotonic_nanos();
         system->tick(world_.registry(), dt);
         const uint64_t sys_us = static_cast<uint64_t>(
             (utils::monotonic_nanos() - sys_begin) / utils::NANOS_PER_MICRO);
 
-        if (idx_it == idx_map.end() || i >= idx_it->second.size()) {
+        if (gate_info == nullptr) {
             continue;  // lockstep info missing (never expected) - keep ticking, skip attribution
         }
-        const internal::SystemInfo& info = infos[idx_it->second[i]];
+        const internal::SystemInfo& info = *gate_info;
         bool merged = false;
         for (size_t p = 0; p < pass_hash.size(); ++p) {
             if (pass_hash[p] == info.mod_hash) {

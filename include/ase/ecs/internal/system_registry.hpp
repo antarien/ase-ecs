@@ -63,6 +63,11 @@ struct SystemInfo {
     // (never observable as defaults) so the tick loop attributes O(1).
     uint32_t mod_hash = 0;  // FNV-1a32 (entt::hashed_string) of source
     uint32_t grp_id = 0;    // module-group id (ase::types::mod_grp_of; MOD_GRP_ID_NONE = unregistered)
+    // Region-Domain-Gate (App::run_schedule): Ebene des Quell-Moduls aus dessen Manifest
+    // (module.toml `plane`, deklariert VOR dem Laden via set_module_plane). Vorgabe ist
+    // SIMULATION - jedes Modul ohne erklaerte Ausnahme wird ohne RegionRect-Coverage gehalten
+    // (Betreiber-Festlegung 2026-08-26). Werte: ecs::APP_PLANE_* (app.hpp).
+    uint8_t plane = 0;
 };
 
 // =============================================================================
@@ -100,6 +105,13 @@ public:
     void add_system(Schedule schedule, std::unique_ptr<System> system,
                     std::string name, std::string source, std::string version,
                     ase::containers::Vector<std::string> run_after, int priority);
+
+    /**
+     * Declare the gate plane of one module BEFORE its systems register (kernel reads it
+     * from the module manifest). Systems of undeclared modules carry the SIMULATION
+     * default and are held by the region-domain gate while no coverage stands.
+     */
+    void set_module_plane(const std::string& source, uint8_t plane);
 
     /**
      * Add a deferred system to the main lists (called after boot completes).
@@ -215,6 +227,9 @@ private:
     ase::containers::HashMap<std::string, System*> name_to_system_;
     ase::containers::HashMap<std::string, size_t> name_to_index_;
     ase::containers::HashMap<std::string, size_t> source_totals_;
+    // Modul → Gate-Ebene (set_module_plane, vor dem Laden deklariert); fehlender
+    // Eintrag = SIMULATION-Vorgabe. Schluessel ist der Quellname wie in SystemInfo.source.
+    ase::containers::HashMap<std::string, uint8_t> module_planes_;
     ase::containers::HashMap<Schedule, ase::containers::Vector<size_t>> schedule_info_indices_;
     ase::containers::HashMap<Schedule, ase::containers::HashMap<std::string, size_t>> schedule_source_counts_;
     size_t total_count_ = 0;

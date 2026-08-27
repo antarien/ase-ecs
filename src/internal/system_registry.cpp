@@ -44,6 +44,16 @@ void SystemRegistry::add_system(Schedule schedule, std::unique_ptr<System> syste
                                  ase::containers::Vector<std::string> run_after, int priority) {
     auto* sys_ptr = system.get();
 
+    // Region-Domain-Gate: die Ebene des Quell-Moduls kommt aus der VOR dem Laden
+    // deklarierten Karte (set_module_plane, Kernel liest sie aus dem Manifest).
+    // Fehlender Eintrag = 0 = SIMULATION-Vorgabe (Betreiber-Festlegung 2026-08-26:
+    // jedes Modul ohne erklaerte Ausnahme simuliert und wird ohne Coverage gehalten).
+    uint8_t plane = 0;
+    auto plane_it = module_planes_.find(source);
+    if (plane_it != module_planes_.end()) {
+        plane = plane_it->second;
+    }
+
     SystemInfo info{
         .name = name,
         .source = source,
@@ -53,7 +63,8 @@ void SystemRegistry::add_system(Schedule schedule, std::unique_ptr<System> syste
         .priority = priority,
         // M-B module axis: resolve the module identity ONCE, at registration.
         .mod_hash = entt::hashed_string::value(source.c_str()),
-        .grp_id = ase::types::mod_grp_of(source.c_str())
+        .grp_id = ase::types::mod_grp_of(source.c_str()),
+        .plane = plane
     };
 
     // Late-System-Registration: if boot is in progress, ONLY queue — do NOT
@@ -76,6 +87,10 @@ void SystemRegistry::add_system(Schedule schedule, std::unique_ptr<System> syste
     schedule_systems_[schedule].push_back(std::move(system));
     schedule_info_indices_[schedule].push_back(info_index);
     ++schedule_source_counts_[schedule][source];
+}
+
+void SystemRegistry::set_module_plane(const std::string& source, uint8_t plane) {
+    module_planes_[source] = plane;
 }
 
 void SystemRegistry::add_deferred(Schedule schedule, std::unique_ptr<System> system,
