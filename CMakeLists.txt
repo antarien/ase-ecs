@@ -11,8 +11,8 @@ ASE CORE BUILD CONFIGURATION
 @module      ase-ecs
 @layer       1 (Core)
 @created     2025-12-15
-@modified    2026-01-30
-@version     00.00.32.00032 [core]
+@modified    2026-09-08
+@version     00.01.11.00061 [feat]
 
 CMAKE MODULE COMPLIANCE
 
