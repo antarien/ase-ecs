@@ -15,6 +15,7 @@
  * @module      ase-ecs
  * @layer       1 (Core)
  * @category    tag
+ * @parity      server_only
  * @created     2026-08-22
  * @modified    2026-08-22
  * @version     1.0.0

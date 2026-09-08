@@ -82,10 +82,18 @@ add_library(${PROJECT_NAME} STATIC
 
     #[[
     HEADERS - CORE
-    Core ECS framework headers: App, System, Schedule, Types.
+    Core ECS framework headers: App, Entity, System, World, Schedule.
+    entity.hpp und world.hpp sind am 2026-08-30 aus system.hpp herausgeschnitten worden -
+    Vokabular, Systemvertrag und Weltfassade waren drei Zwecke in 625 Zeilen. system.hpp
+    inkludiert beide weiter, damit keine der 1962 einbindenden Dateien eine Zeile aendern muss.
+    Das Vokabular heisst NICHT types.hpp: dieser Name macht eine Datei zur Konstanten-SSOT ihres
+    Moduls, und entity.hpp definiert keine einzige Konstante. Die Vorlage waere erfuellbar
+    gewesen, die Zusage darin nicht wahr.
     ]]
     include/ase/ecs/app.hpp
+    include/ase/ecs/entity.hpp
     include/ase/ecs/system.hpp
+    include/ase/ecs/world.hpp
     include/ase/ecs/schedule.hpp
     include/ase/ecs/plugin_interface.hpp
 
@@ -102,20 +110,35 @@ add_library(${PROJECT_NAME} STATIC
 
     #[[
     HEADERS - COMPONENTS - APP
-    App state components for rates and timing, plus the quit-request mark that
-    lets any layer above L1 end the run loop through the registry (the ECS form
-    of App::quit(); App::tick() polls it, KernelCoreLfcSystem stamps it).
+    App state components for rates and timing, plus die zwei Marken, mit denen eine Schicht
+    ueber L1 auf den Ablauf einwirkt, ohne dass die App etwas ueber Tiers wuesste.
+    ecs_app_quit_req_tag: die ECS-Form von App::quit() - App::tick() liest sie,
+    KernelCoreLfcSystem stempelt sie.
+    ecs_app_rgn_gate_tag: armiert das Regionstor in App::run_schedule; der WORLD-Kernel
+    stempelt sie einmal bei der Tier-Initialisierung, auf jeder anderen Tier bleibt das Tor
+    kalt und die Schleife byteweise wie zuvor.
+
+    ecs_app_rgn_gate_tag STAND BIS 2026-08-31 IN KEINER CMakeLists, obwohl ZWEI Einheiten sie
+    einbinden - core/ase-ecs/src/app.cpp:39 und kernel/ase-kernel/src/core/kernel_tier_ini_sys.cpp:146.
+    Gefunden hat es validate_cmake_files, und zwar erst, als die Batterie zum ersten Mal fuer
+    core/ase-ecs selbst gefahren wurde: die Einheit liegt in KEINEM Tier-Zuschnitt, also hat
+    dieses Tor sie nie gesehen. Eine vergessene Eintragung, keine tote Datei - der Meldetext
+    sagt es selbst, und die Loeschung waere hier der Verlust des Regionstors gewesen.
     ]]
     include/ase/ecs/components/app/state/ecs_app_sta_mod_tim_comp.hpp
     include/ase/ecs/components/app/state/ecs_app_sta_shtd_comp.hpp
     include/ase/ecs/components/app/state/ecs_app_sta_tim_comp.hpp
     include/ase/ecs/components/app/tag/ecs_app_quit_req_tag.hpp
+    include/ase/ecs/components/app/tag/ecs_app_rgn_gate_tag.hpp
 
     #[[
     HEADERS - COMPONENTS - TAG
-    Die vier Lebenszyklus-Marken des ECS. system.hpp:565-579 fuehrt sie als
+    Die vier Lebenszyklus-Marken des ECS. Der Grabsteinblock in system.hpp fuehrt sie als
     geschlossenen Satz; die Definitionen liegen seit dem Herausloesen in je einem
     eigenen Header und gehoeren damit in diese Liste.
+    (Hier stand bis 2026-08-30 "system.hpp:565-579" - der Schnitt von system.hpp hat die
+    Zeilennummer verschoben, und eine Zeilennummer in einer Beschreibung altert bei jedem
+    Schrieb an der beschriebenen Datei, ohne dass ein Tor es meldet.)
     KEIN RE-EXPORT-Block: ecs_dty_tag und ecs_pend_sync_tag haben Verbraucher
     (ase-sdk, ase-pl-sky), ecs_dstr_tag und ecs_crtd_tag haben baumweit KEINEN
     ausser ihrer eigenen Definition. Eine Fassaden-Zusage waere hier eine
@@ -166,10 +189,27 @@ target_link_libraries(${PROJECT_NAME}
 )
 #[[ VERBOTEN: No Layer 3 dependencies! ]]
 
-if(ASE_BUILD_TESTS)
+#[[
+DAS TESTZIEL STAND BIS 2026-09-01 HIER INLINE, und das war der Grund fuer einen offenen Posten,
+nicht nur eine Formfrage. Die drei Zeilen lauteten:
+
     add_executable(${PROJECT_NAME}-test tests/test_ecs.cpp)
     target_link_libraries(${PROJECT_NAME}-test PRIVATE ase::ecs)
     target_compile_features(${PROJECT_NAME}-test PRIVATE cxx_std_20)
+
+Weil es keine tests/CMakeLists.txt gab, gab es auch keine Stelle, an der doctest hereinkommt -
+und tests/test_ecs.cpp schrieb genau das in seinen eigenen Kopf und meldete es als offenen
+Posten, statt ihn zu schliessen. Gemessen war core/ase-ecs das EINZIGE core-Modul ohne eigenes
+tests/CMakeLists.txt; die sieben Geschwister (codegen, console, convert, markdown, neo4j,
+serial, vault) tragen alle eines.
+
+Alle drei Zeilen leben im Unterverzeichnis weiter: das Ziel heisst dort ase-ecs-test statt
+${PROJECT_NAME}-test (ausgeschrieben, wie bei den Geschwistern), ase::ecs bleibt verlinkt, und
+cxx_std_20 steht unveraendert. Dazu kommen doctest, ase::math und ein add_test - Erweiterung,
+kein Ersatz.
+]]
+if(ASE_BUILD_TESTS)
+    add_subdirectory(tests)
 endif()
 
 include(GNUInstallDirs)

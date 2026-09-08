@@ -43,6 +43,7 @@
 #include <ase/ecs/internal/boot_logger.hpp>
 #include <ase/ecs/internal/terminal_utils.hpp>
 #include <ase/log/log.hpp>
+#include <ase/log/log_lifecycle.hpp>  // die Capture-Klammer um die Boot-Tabelle
 #include <ase/log/colors.hpp>
 
 #include <cstdio>

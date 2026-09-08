@@ -352,7 +352,15 @@ enum class Schedule : uint8_t {
     // Real-Time schedules
     if (val <= 3) return 0.0f;                    // Once
     if (val >= 10 && val <= 14) return 0.016f;    // ~16ms
-    if (val >= 20 && val <= 22) return 0.033f;    // 33ms
+    // BERECHNET, NICHT GERUNDET — und das ist der einzige Tier, bei dem der Unterschied
+    // die VERGLEICHSRICHTUNG dreht. Der Taktgeber feuert mit `accumulator >= interval`
+    // (internal/tick_scheduler.cpp:191/200) gegen `TIER_CONFIGS[Kinetic].interval`, und das
+    // ist dort `1.0f/30.0f` (:129). Gegen das gerundete `0.033f` gilt:
+    //     0.032999999821186066  <  0.03333333507180214   →  `>=` FALSCH, der Tier bleibt STUMM
+    // Wer mit `schedule_interval(Schedule::Dynamics)` tickte, liess den Physik-Tier also
+    // nicht laufen und prueft danach eine Registry, die niemand angefasst hat. Alle uebrigen
+    // Tiers sind bitgleich (20Hz/10Hz/5Hz/2Hz), deshalb faellt es nur hier auf.
+    if (val >= 20 && val <= 22) return 1.0f / 30.0f;  // 30Hz — Kinetic, siehe oben
     if (val >= 30 && val <= 31) return 0.05f;     // 50ms
     if (val >= 40 && val <= 43) return 0.1f;      // 100ms
     if (val >= 50 && val <= 53) return 0.2f;      // 200ms

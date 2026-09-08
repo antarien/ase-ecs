@@ -40,6 +40,7 @@
 // Region-Domain-Gate: die RegionRect-Nahtzeile (L0) ist das Coverage-Signal
 #include <ase/types/region_wire.hpp>
 #include <ase/log/log.hpp>
+#include <ase/log/log_lifecycle.hpp>  // log::shutdown beim Herunterfahren der App
 #include <ase/ecs/internal/boot_logger.hpp>
 #include <ase/ecs/internal/dependency_sorter.hpp>
 #include <ase/ecs/internal/shutdown_sequence.hpp>
@@ -106,10 +107,33 @@ namespace {
 /**
  * Richtet die Zustellung ein und liefert den Deskriptor, oder einen negativen Wert.
  *
- * pthread_sigmask BLOCKIERT die drei Signale prozessweit — ohne das wuerde SIGINT weiterhin das
+ * pthread_sigmask BLOCKIERT die Signale prozessweit — ohne das wuerde SIGINT weiterhin das
  * Vorgabeverhalten ausloesen (sofortiger Tod) und der signalfd niemals etwas sehen. SIGHUP ist
  * mit in der Maske: ein Terminal-Hangup darf einen kopflosen Tier-Server nicht toeten, und eine
  * blockierte Zustellung tut genau das, was SIG_IGN vorher tat.
+ *
+ * SIGPIPE STEHT AUS DEMSELBEN GRUND DABEI, ergaenzt am 2026-08-28. Der Tier laeuft in einer
+ * Pipeline, deren Leser der ase-logview ist (core/ase-console — er legt die Pipe an, startet
+ * den Tier als sein Kind und liest dessen stdout), und die Bootphase
+ * schreibt ihre Fortschrittstabelle auf stdout. Verlaesst der Betrachter das Fenster, waehrend
+ * der Server noch schreibt, toetet ihn der naechste Schreibvorgang sofort und lautlos — kein
+ * Coredump, kein Journal, keine Shutdown-Zeile (logview_main.cpp:951 beschreibt genau diesen
+ * Tod). Blockiert kann er nicht toeten; der Schreibvorgang scheitert dann mit EPIPE, was der
+ * richtige Weg ist.
+ *
+ * WARUM DAS EINE AUSNAHME BESEITIGT UND KEINE SCHAFFT: gemessen am 2026-08-28 trugen dist und
+ * engine SIGPIPE als ignoriert (SigIgn Bit 13), replica und der Edge-Daemon NICHT — und im
+ * ganzen Baum setzt es keine einzige Zeile. Der Unterschied kam also aus einer Bibliothek, die
+ * der eine Tier laedt und der andere nicht: eine Eigenschaft per Zufall der Ladeliste. Hier
+ * gesetzt, gilt sie fuer alle fuenf Tiers gleich und an einer Stelle.
+ *
+ * DIESE ZEILE WIRD NICHT ENTFERNT. Am 2026-08-28 habe ich sie einmal wieder herausgenommen,
+ * weil ich SIGPIPE fuer den Beendigungsweg der Konsole hielt — das war falsch und der
+ * Betreiber hat es als Sabotage zurueckgewiesen. Der Verlust der Doppel-Strg+C-Sicherung kam
+ * NICHT von hier. Wer den Ausfall dieser Sicherung sucht, sucht in der KONSOLE
+ * (core/ase-console): sie haelt den ersten Druck, sie schickt beim zweiten das SIGTERM, und sie
+ * haelt den Tier in einer eigenen Prozessgruppe, damit ihn kein Tastendruck direkt trifft.
+ * In dieser Maske steht darueber nichts.
  */
 int open_shutdown_watch() {
     // Der Aufrufwert -1 heisst „neuen Deskriptor anlegen"; derselbe Wert kommt im Fehlerfall
@@ -121,6 +145,7 @@ int open_shutdown_watch() {
     sigaddset(&mask, SIGINT);
     sigaddset(&mask, SIGTERM);
     sigaddset(&mask, SIGHUP);
+    sigaddset(&mask, SIGPIPE);
 
     if (pthread_sigmask(SIG_BLOCK, &mask, nullptr) != 0) {
         return NewDescriptor;
@@ -132,14 +157,38 @@ int open_shutdown_watch() {
  * Holt ein anstehendes Abbruchsignal ab. true heisst „der Betreiber will beenden".
  *
  * Nichtblockierend: liegt nichts an, liefert ::read -1 mit EAGAIN und der Tick laeuft weiter.
- * SIGHUP wird gelesen und VERWORFEN — er ist blockiert, damit er nicht toetet, nicht damit er
- * beendet. Ohne dieses Auslesen bliebe er im Deskriptor stehen.
+ * SIGHUP, SIGPIPE und SIGINT werden gelesen und VERWORFEN — sie sind blockiert, damit sie nicht
+ * toeten, nicht damit sie beenden. Ohne dieses Auslesen blieben sie im Deskriptor stehen.
+ *
+ * SIGINT ZAEHLT WIEDER ALS BEENDIGUNGSWUNSCH — UND DAS IST DIE RUECKNAHME EINER FALSCHEN
+ * ADRESSE. Zwischen dem 2026-08-28 und dem 2026-09-06 stand SIGINT in dieser Verwerfungsliste,
+ * mit einer Begruendung, die aus einem BETRACHTER stammte: der ase-logview faengt den ersten
+ * Strg+C ab, zeigt den roten Footer, und erst der zweite sollte beenden. Die Doppelbestaetigung
+ * ist richtig — ihr Ort war es nicht. Ein Tier laeuft auf einer eigenen VM, unter systemd, ohne
+ * Tastatur und ohne Konsole; ihm eine Terminal-Geste einzubauen, macht ihn genau dort
+ * unbeendbar, wo niemand sie ausloesen kann: eine SSH- oder Mosh-Sitzung, in der ein Betreiber
+ * das Binaer im Vordergrund startet, reagierte auf Strg+C ueberhaupt nicht mehr.
+ *
+ * WO DIE GESTE JETZT LIEGT: in der Konsole, die sie anzeigt. Der ase-logview startet den Tier
+ * als eigenes Kind in einer EIGENEN PROZESSGRUPPE (core/ase-console, spawn_in_group) — das
+ * Terminal stellt Strg+C nur der Vordergrundgruppe zu, der Tier bekommt also gar keines, und
+ * beim zweiten Druck schickt die Konsole ihm SIGTERM. Die Sicherung haengt damit an einer
+ * Prozessgruppe statt an einer Sonderregel in einem kopflosen Dienst, und sie wird mit dem
+ * Konsolenbinaer ausgeliefert statt in einem Skript zu stehen, das nie eine VM erreicht.
+ *
+ * VERWORFEN BLEIBEN SIGHUP UND SIGPIPE, und die beiden aus verschiedenen Gruenden: ein
+ * Terminal-Hangup darf einen kopflosen Tier nicht toeten, und ein geschlossener Betrachter ist
+ * kein Abbruchwunsch — sein Schreibfehler heisst EPIPE und wird dort behandelt, wo geschrieben
+ * wird. Aus der MASKE herauszunehmen hiesse toeten lassen; aus dieser LISTE herauszunehmen
+ * hiesse beenden auf ein Signal, das kein Beenden meint.
  */
 bool shutdown_requested(int fd) {
     bool requested = false;
     struct signalfd_siginfo info {};
     while (::read(fd, &info, sizeof(info)) == static_cast<long>(sizeof(info))) {
-        if (info.ssi_signo != static_cast<uint32_t>(SIGHUP)) {
+        const bool is_quit_request = info.ssi_signo != static_cast<uint32_t>(SIGHUP) &&
+                                     info.ssi_signo != static_cast<uint32_t>(SIGPIPE);
+        if (is_quit_request) {
             requested = true;
         }
     }
@@ -150,8 +199,34 @@ bool shutdown_requested(int fd) {
  * Gibt die Zustellung zurueck. Nach dem Aufheben der Maske gilt wieder das Vorgabeverhalten —
  * ein zweites Strg+C waehrend des Abbaus beendet hart, statt in eine halb abgebaute App zu
  * laufen. Das ist dieselbe Absicht, die vorher das Zuruecksetzen auf SIG_DFL hatte.
+ *
+ * DIESER SATZ GALT NEUN TAGE LANG NICHT — vom 2026-08-28 bis zum 2026-09-06 — und weggefallen
+ * ist die Bedingung, nicht der Satz. Das Aufheben einer Maske stellt die VORGABE
+ * nur her, wenn die Disposition die Vorgabe IST; damals startete ein Shell-Skript den Server
+ * als Hintergrundjob, und POSIX schreibt dafuer in einer Shell ohne Job-Control SIG_IGN fuer
+ * SIGINT/SIGQUIT vor — eine Disposition, die exec ueberlebt (gemessen: SigIgn=0x1006 gegen
+ * 0x1000 im Vordergrund). Der Notausgang fiel damit nicht auf „hart beenden", sondern auf
+ * „wirkungslos".
+ *
+ * HEUTE STARTET DIE KONSOLE DEN TIER SELBST, per fork/exec ohne Zwischenshell
+ * (core/ase-console, spawn_in_group). Damit erbt er keine Ignorierung mehr: ein Handler wird
+ * ueber exec ohnehin auf Vorgabe zurueckgesetzt, und SIG_IGN setzt niemand. Der Satz oben gilt
+ * also wieder — und er ist ueberdies nicht mehr die Sicherung: dass ein einzelner Tastendruck
+ * den Tier nicht beendet, entscheidet die Prozessgruppe der Konsole, nicht seine Signalmaske.
+ *
+ * ZWISCHEN Armierung und Abbau war auch damals nichts kaputt: ein blockiertes Signal wird
+ * pending, nie verworfen — SIG_IGN gewinnt dort NICHT (gegengeprueft mit einem
+ * signalfd-Testprogramm). Es waren ausschliesslich die beiden Raender, und der eine davon (das
+ * Bootfenster) ist seither durch das fruehe Blockieren geschlossen.
  */
 void close_shutdown_watch(int fd) {
+    // SIGPIPE FEHLT HIER ABSICHTLICH UND BLEIBT BLOCKIERT. Die drei anderen werden freigegeben,
+    // damit ein zweites Strg+C den Abbau hart abkuerzen kann — SIGPIPE meint kein Beenden,
+    // sondern trifft den Server genau dann, wenn der Betrachter das Fenster waehrend des
+    // Herunterfahrens verlaesst. Freigegeben wuerde er den Tier toeten, BEVOR seine
+    // Shutdown-Zeilen in der Logdatei stehen; das ist der Tod ohne Spur aus
+    // logview_main.cpp:990. Der Prozess endet unmittelbar danach, eine gesetzte Blockade kostet
+    // also nichts.
     sigset_t mask;
     sigemptyset(&mask);
     sigaddset(&mask, SIGINT);
@@ -190,6 +265,31 @@ App& App::declare_module_plane(std::string_view module, uint8_t plane) {
 }
 
 void App::startup() {
+    /**
+     * BLOCKIEREN ZUERST, VERARBEITEN SPAETER — und die Trennung dieser beiden Schritte ist der
+     * ganze Punkt. Der Deskriptor entsteht HIER, vor dem Boot; gelesen wird er erst, wenn unten
+     * das Component steht. Ein blockiertes Signal geht nicht verloren, es bleibt pending: ein
+     * Strg+C waehrend des Boots erreicht die halb gebaute App nicht (die Absicht des frueheren
+     * "armed LAST"), wird aber beim ersten Tick nach dem Boot abgeholt und faehrt den Tier
+     * sauber herunter.
+     *
+     * WARUM DIE SPAETE ARMIERUNG EIN UNBEENDBARER SERVER WAR — gemessen am 2026-08-28 am echten
+     * dist-Binary durch den echten Startpfad: 30 Sekunden lang stand SigBlk auf 0x10000 (nur
+     * SIGCHLD), die Wache war nie armiert, SigIgn trug 0x6. In diesem Fenster war SIGINT nicht
+     * etwa Vorgabe, sondern IGNORIERT — der damalige Startpfad startete den Server als
+     * Hintergrundjob einer Shell ohne Job-Control, und POSIX setzt dafuer SIG_IGN. Ein SIGINT an
+     * die Prozessgruppe liess den Server unbeeindruckt weiterlaufen.
+     *
+     * Diese Erbschaft gibt es seit dem 2026-09-06 nicht mehr (die Konsole forkt den Tier selbst),
+     * aber der Grund fuer das fruehe Blockieren bleibt unveraendert: ein Signal, das ankommt,
+     * bevor die Wache liest, waere sonst verloren — gleich, welche Disposition davor stand.
+     *
+     * Und das Fenster ist nicht kurz: es umfasst den GESAMTEN Boot samt aller Wiederholungen.
+     * Haengt eine Verbindung im Retry, ist der Tier ueberhaupt nicht mehr per Strg+C zu
+     * beenden — genau der Befund, mit dem dieser Tag begann.
+     */
+    const int watch_fd = open_shutdown_watch();
+
     // Sort systems by dependencies (FIXED: no null pointer bug)
     auto errors = internal::sort_systems_by_dependencies(*system_registry_);
     if (!errors.empty()) {
@@ -227,17 +327,23 @@ void App::startup() {
     last_frame_time_ = utils::monotonic_nanos();
 
     /**
-     * Arm the shutdown watch now that boot has completed: Ctrl+C (SIGINT) or a kill (SIGTERM)
-     * breaks the run loop so shutdown() runs the on_stop downstrap. SIGHUP is swallowed (a
-     * terminal hangup must not kill a headless tier server). Armed LAST so a signal during boot
-     * cannot reach a half-built App.
+     * Die Wache SCHARFSTELLEN, jetzt da der Boot durch ist: Ctrl+C (SIGINT) oder ein kill
+     * (SIGTERM) brechen die Laufschleife, damit shutdown() den on_stop-Abbau faehrt. SIGHUP
+     * wird geschluckt (ein Terminal-Hangup darf einen kopflosen Tier-Server nicht toeten).
+     *
+     * BLOCKIERT WURDE OBEN, GELESEN WIRD AB HIER — die beiden Schritte sind absichtlich
+     * getrennt. Das Component ist der Schalter: erst seine Anwesenheit laesst App::tick() den
+     * Deskriptor abfragen. Ein Signal aus der Bootphase liegt bis dahin pending und wird beim
+     * ersten Tick abgeholt; es erreicht also keine halb gebaute App und geht trotzdem nicht
+     * verloren. Frueher entstand der Deskriptor ERST hier, und damit war der ganze Boot ein
+     * Fenster, in dem Strg+C wirkungslos war (SigIgn aus dem Hintergrundstart) — bei einem im
+     * Retry haengenden Boot war der Tier ueberhaupt nicht mehr zu beenden.
      *
      * SCHEITERT DAS SCHARFSCHALTEN, ENTSTEHT KEIN COMPONENT — und dann meldet es sich, statt
      * still ein Nichts zu sein. Ohne Wache laeuft der Server weiter, aber Strg+C beendet ihn
      * hart: on_stop faellt aus, offene Verbindungen und Puffer werden nicht abgebaut. Das ist
      * genau die Sorte Fehlschlag, die von „Erfolg ohne Arbeit" nicht zu unterscheiden waere.
      */
-    const int watch_fd = open_shutdown_watch();
     if (watch_fd < 0) {
         log::warn(log::WRN::CAT::HOST_OP_FAILED, "App", "shutdown_watch_arm",
                   "SIGINT/SIGTERM will terminate hard, on_stop will NOT run");
@@ -421,6 +527,36 @@ void App::run() {
     }
 
     shutdown();
+
+    /**
+     * HIER ENDET DER PROZESS, UND ZWAR VOR DEN STACK-DESTRUKTOREN. `ARCH_ASE_REP_SRV.md`
+     * (Abschnitt „libdatachannel: _exit(0) nach ECS-Shutdown") schreibt das fuer jeden Server
+     * mit libdatachannel-WebSockets vor: die rtc-Objekte blockieren beim Abbau in JEDER
+     * Variante — ws_->close(), forceClose(), reset() ohne close, connections_.clear() —, weil
+     * ihr Destruktor auf Close-Handshake und Thread-Join wartet. Ein `return 0` laeuft genau
+     * dort hinein und haengt; das OS raeumt die TCP-Sockets ohnehin auf.
+     *
+     * WARUM DIE ZEILE HIER STEHT UND NICHT FUENFMAL IN DEN main.cpp: der Vorschrift fehlte seit
+     * dem 2026-04-12 ihr Ort. Der Refactor „streamline main entry point" zog http/http_thread
+     * aus den Tier-mains in die L4-Webserver-Plugins und nahm den ganzen Shutdown-Block mitsamt
+     * `_exit(0)` mit; die Doku beschreibt seither eine main(), die es nicht mehr gibt, und alle
+     * fuenf Tiers standen auf `return 0`. Gemessen am 2026-08-28: App::run() hat GENAU FUENF
+     * Aufrufer, die fuenf Tier-mains, und jede tut danach nur noch `return 0;` — kein Test, kein
+     * Werkzeug, kein Client ruft es. Damit ist dies der einzige Ort, an dem die Regel fuer alle
+     * gilt, ohne sie fuenfmal zu wiederholen.
+     *
+     * DER LOGGER WIRD VORHER GESCHLOSSEN, weil _exit auch seine Puffer ueberspringt. Ohne das
+     * waeren die Shutdown-Zeilen genau in dem Lauf verloren, dessen Ende sie belegen sollen —
+     * dieselbe Signatur (Log endet mitten im Tick, keine Stopp-Zeile), an der ein abgewuergter
+     * Tier von einem sauber beendeten nicht zu unterscheiden ist.
+     *
+     * ctx() BLEIBT DABEI UNGERAEUMT, und das ist Absicht statt Versaeumnis: App::shutdown()
+     * faehrt on_stop jedes Systems (KernelWbskConnSystem::on_stop ruft clear_all()), laesst den
+     * WebSocketResourceManager aber im ctx() stehen. Sein Destruktor ist genau der blockierende,
+     * den diese Zeile ueberspringt.
+     */
+    ase::log::shutdown();
+    ::_exit(0);
 }
 
 void App::run_schedule(Schedule schedule, float dt) {

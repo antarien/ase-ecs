@@ -1,0 +1,142 @@
+{
+    "$schema": "https://ase.dev/schemas/codegen.json",
+    "version": "2.0.0",
+    "module": "ase-ecs",
+    "client_relevance": true,
+    "dependencies": [
+        "ase-platform"
+    ],
+    "channels": [
+        {
+            "name": "ecs_entity_spawn",
+            "reliability": "reliable",
+            "type": "create",
+            "components": [
+                "EcsDstrTag"
+            ]
+        },
+        {
+            "name": "ecs_entity_despawn",
+            "reliability": "reliable",
+            "type": "delete",
+            "components": [
+                "EcsDstrTag"
+            ]
+        }
+    ],
+    "components": {
+        "shared": [
+            {
+                "name": "EcsDstrTag",
+                "description": "EcsDstrTag - Entity marked for deferred deletion",
+                "fields": [],
+                "file": "tag/ecs_dstr_tag.hpp"
+            }
+        ],
+        "server_only": [
+            {
+                "name": "EcsAppQuitReqTag",
+                "description": "EcsAppQuitReqTag - A layer above L1 asks the process loop to end",
+                "fields": [],
+                "file": "app/tag/ecs_app_quit_req_tag.hpp"
+            },
+            {
+                "name": "EcsAppRgnGateTag",
+                "description": "EcsAppRgnGateTag - This process runs region-bound simulation and carries the gate",
+                "fields": [],
+                "file": "app/tag/ecs_app_rgn_gate_tag.hpp"
+            },
+            {
+                "name": "EcsAppStaModTimComponent",
+                "description": "Per-(module, schedule) system time row (Entity-per-Item)",
+                "fields": [
+                    {
+                        "name": "mod_hash",
+                        "type": "uint32",
+                        "default": "0",
+                        "description": "FNV-1a32 (entt::hashed_string) of the module/plugin source name"
+                    },
+                    {
+                        "name": "grp_id",
+                        "type": "uint32",
+                        "default": "0",
+                        "description": "module-group id resolved at registration (mod_grp_of; MOD_GRP_ID_NONE = unregistered)"
+                    },
+                    {
+                        "name": "sched_id",
+                        "type": "uint32",
+                        "default": "0",
+                        "description": "ase::ecs::Schedule value these systems ran under (frozen u8 enum values)"
+                    },
+                    {
+                        "name": "time_us",
+                        "type": "uint64",
+                        "default": "0",
+                        "description": "running total wall microseconds of this module's systems in this schedule (grows only)"
+                    },
+                    {
+                        "name": "runs",
+                        "type": "uint64",
+                        "default": "0",
+                        "description": "running count of completed schedule passes (consumer sample cursor)"
+                    }
+                ],
+                "file": "app/state/ecs_app_sta_mod_tim_comp.hpp"
+            },
+            {
+                "name": "EcsAppStaShtdComponent",
+                "description": "Descriptor of the armed shutdown watch (singleton)",
+                "fields": [
+                    {
+                        "name": "watch_fd",
+                        "type": "int32",
+                        "default": "0",
+                        "description": "signalfd descriptor; PRESENCE of this component means \"watch armed\""
+                    }
+                ],
+                "file": "app/state/ecs_app_sta_shtd_comp.hpp"
+            },
+            {
+                "name": "EcsAppStaTimComponent",
+                "description": "Measured schedule execution time (singleton)",
+                "fields": [
+                    {
+                        "name": "dynamics_time_ms",
+                        "type": "float32",
+                        "default": "0.0f",
+                        "description": "wall duration of the most recent Dynamics schedule execution (ms)"
+                    },
+                    {
+                        "name": "dynamics_runs",
+                        "type": "uint64",
+                        "default": "0",
+                        "description": "monotonic count of Dynamics executions (sample cursor for readers)"
+                    }
+                ],
+                "file": "app/state/ecs_app_sta_tim_comp.hpp"
+            },
+            {
+                "name": "EcsCrtdTag",
+                "description": "EcsCrtdTag - Entity created this frame, not yet announced",
+                "fields": [],
+                "file": "tag/ecs_crtd_tag.hpp"
+            },
+            {
+                "name": "EcsDtyTag",
+                "description": "EcsDtyTag - Entity changed since the last broadcast",
+                "fields": [],
+                "file": "tag/ecs_dty_tag.hpp"
+            },
+            {
+                "name": "EcsPendSyncTag",
+                "description": "EcsPendSyncTag - Entity waiting for its synchronisation pass",
+                "fields": [],
+                "file": "tag/ecs_pend_sync_tag.hpp"
+            }
+        ]
+    },
+    "systems": {
+        "shared": [],
+        "server_only": []
+    }
+}

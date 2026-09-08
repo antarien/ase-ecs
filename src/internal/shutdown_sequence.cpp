@@ -36,6 +36,7 @@
 #include <ase/ecs/internal/shutdown_sequence.hpp>
 #include <ase/ecs/internal/terminal_utils.hpp>
 #include <ase/log/log.hpp>
+#include <ase/log/log_lifecycle.hpp>  // die Capture-Klammer um die Abschalt-Tabelle
 #include <ase/log/log_module.hpp>
 #include <ase/log/colors.hpp>
 
@@ -99,6 +100,46 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
 
     size_t total = registry.total_count();
     size_t current = 0;
+
+    // DIE EINE ZEILE, DIE IN DER LOGDATEI BLEIBT — und sie steht bewusst HIER, vor der
+    // Umleitung. Alles ab capture_begin() zeichnet ueber write_terminal, weil die Tabelle
+    // ihre Zeilen NEU SCHREIBT und dabei ANSI-Sequenzen und eine feste Spaltenform traegt;
+    // durch einen Logsink geleitet waere genau diese Form nicht mehr garantiert (Zeitstempel,
+    // Level-Praefix, Zeilenumbrueche des Sinks). DER TERMINAL-TRANSPORT WIRD DESHALB NICHT
+    // ANGETASTET — hier kommt nichts weg und nichts wird umgeleitet, es kommt EINE Zeile
+    // davor hinzu.
+    //
+    // WARUM SIE GEBRAUCHT WIRD: ohne sie hinterlaesst ein sauberer Shutdown in der Logdatei
+    // KEINE Spur. Ein Tier, der ordentlich heruntergefahren wurde, und einer, der mitten im
+    // Tick weggerissen wurde, sehen dort identisch aus — beide enden abrupt in der letzten
+    // Arbeitszeile. Am 2026-08-28 liess sich deshalb an keinem der fuenf Tier-Logs
+    // feststellen, ob sie sauber gestoppt hatten; die Tabelle, die es beantwortet haette, war
+    // mit dem Konsolenfenster verschwunden.
+    //
+    // INF, nicht DBG: der on_stop-Downstrap je System loggt auf DBG und ist damit im
+    // Normalbetrieb (`--log +ERR +WRN +INF`) unsichtbar — gemessen 0 DBG-Zeilen in engine,
+    // dist und replica. Eine Marke, die nur bei eingeschaltetem Debug erscheint, beantwortet
+    // die Frage nicht. Das Gegenstueck beim Start steht ebenfalls auf INF.
+    //
+    // KEINE ABSCHLUSSZEILE, und das ist kein Versaeumnis: capture_end(false) stellt die
+    // Senken bewusst NICHT zurueck (der Prozess endet hier), eine Zeile danach ginge ins
+    // Leere. Diese Marke belegt den EINTRITT in den Abbau — dass App::shutdown() erreicht
+    // wurde statt eines harten Todes. Fuer den vollstaendigen Verlauf bleibt die Tabelle
+    // zustaendig, dort wo sie hingehoert: am Terminal.
+    log::info("[Shutdown] sequence entered ({} systems)", total);
+
+    // UND SOFORT AUF DIE PLATTE. Ohne diesen Flush existiert die Zeile, erreicht die Datei
+    // aber nie: spdlog puffert, die naechste Anweisung ERSETZT mit capture_begin() die Senken,
+    // und der Prozess endet mit _exit(0) ohne einen einzigen Destruktor. Der Puffer der alten
+    // Senke wird damit von niemandem mehr geleert.
+    //
+    // GEMESSEN am 2026-08-28: die Marke stand im Binary (strings: 1 Treffer, Bau 11:54:10 neuer
+    // als die Quelle), der Kategorie-Filter liess sie durch (das Log trug DBG-Zeilen mehrerer
+    // Quellen), die Signalkette bis zum Shutdown-Pfad war intakt (SIGTERM ueber signalfd,
+    // nachgestellt mit der Maske eines echten Tiers) — und trotzdem war sie nach zwei
+    // DIST-Stopps null Mal in logs/dist-9080.log. Vier gruene Teilpruefungen und ein leeres
+    // Ergebnis: der Puffer war die einzige Stelle, an der die Zeile noch verschwinden konnte.
+    log::flush();
 
     // Logausgabe umleiten, damit keine Zeile die Fortschrittstabelle unten zerreisst.
     // Der Rueckgabewert wird nicht geprueft: false heisst "es gibt noch keinen Logger", und

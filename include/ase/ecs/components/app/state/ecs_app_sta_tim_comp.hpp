@@ -13,6 +13,7 @@
  * @module      ase-ecs
  * @layer       1 (Core)
  * @category    property/temporal/duration
+ * @parity      server_only
  * @created     2026-02-01
  * @modified    2026-08-20
  * @version     1.0.0
