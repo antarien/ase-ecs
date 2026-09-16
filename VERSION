@@ -39,10 +39,10 @@
 #   stable = Production ready (set manually)
 #
 # ==============================================================================
-ASE_ECS=00.01.11.00061
+ASE_ECS=00.01.13.00063
 ASE_ECS_NAME=Entity Component System
 ASE_ECS_DESC=App, Registry, System base class, Schedule
 ASE_ECS_LAYER=1
 ASE_ECS_STATUS=feat
 ASE_ECS_CREATED=2025-12-15
-ASE_ECS_UPDATED=2026-09-08
+ASE_ECS_UPDATED=2026-09-16
