@@ -4,6 +4,7 @@
  * ASE ECS SYSTEM HEADER
  *
  * @file        system.hpp
+ * @design      DSGN_016
  * @brief       The System base class - and the header every ECS consumer still includes
  * @description Declares the base class a system author derives from, and keeps the ECS
  *              vocabulary and the World facade reachable under the include path the tree has

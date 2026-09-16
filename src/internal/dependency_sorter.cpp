@@ -12,6 +12,7 @@
  *
  * @module      ase-ecs
  * @layer       1 (Core)
+ * @design      DSGN_016
  * @category    process/computation/algorithm
  * @created     2026-02-01
  * @modified    2026-08-20

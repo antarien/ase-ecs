@@ -2,6 +2,7 @@
  * ASE CORE INFRASTRUCTURE IMPLEMENTATION
  *
  * @file        test_ecs.cpp
+ * @design      DSGN_016
  * @brief       Pins entity lifetime, component storage, views, tags and system execution of ase-ecs
  * @description ASE ECS Module Tests
  *

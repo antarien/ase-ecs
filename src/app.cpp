@@ -10,6 +10,7 @@
  *
  * @module      ase-ecs
  * @layer       1 (Core)
+ * @design      DSGN_016
  * @category    ecs/module
  * @created     2025-12-01
  * @modified    2026-08-20

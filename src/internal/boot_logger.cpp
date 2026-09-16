@@ -2,6 +2,7 @@
  * ASE CORE INFRASTRUCTURE IMPLEMENTATION
  *
  * @file        boot_logger.cpp
+ * @design      DSGN_021
  * @brief       Boot sequence visualization with colored output
  * @description Draws the startup progress grouped by schedule, with module
  *              colours, timestamps and dependency chains.
