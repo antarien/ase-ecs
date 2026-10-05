@@ -13,8 +13,8 @@
  * @design      DSGN_016
  * @category    ecs/module
  * @created     2025-12-01
- * @modified    2026-08-20
- * @version     1.0.0
+ * @modified    2026-10-03
+ * @version     1.0.1
  *
  * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
  *
@@ -459,8 +459,9 @@ void App::tick(float dt) {
     /**
      * DIE ZWEITE STOPPQUELLE NEBEN DEM SIGNAL: das Quit-Tag. Ein System bekommt die Registry
      * und nie die App — beenden kann den Prozess deshalb nur ein EREIGNIS, das der Tick abholt.
-     * Wer oberhalb von L1 fertig ist (heute: KernelCoreLfcSystem im selben Durchlauf, der
-     * KernelCoreRunnTag entfernt), stampft EcsAppQuitReqTag; hier wird es gelesen. Vorher trug
+     * Wer oberhalb von L1 fertig ist (heute: KernelCoreStopSystem in Schedule::Conclusion, im
+     * selben Durchlauf, der KernelCoreRunnTag entfernt), stampft EcsAppQuitReqTag; hier wird es
+     * gelesen. Vorher trug
      * NUR ase-server-reasoning diese Bruecke, als Sonderschritt in seiner eigenen main-Schleife —
      * die vier anderen Tiers tickten einen gestoppten Kernel endlos weiter. Der View ist leer,
      * solange niemand stoppt; dann kostet das hier nichts.

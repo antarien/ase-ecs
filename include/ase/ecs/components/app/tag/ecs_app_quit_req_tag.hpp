@@ -15,8 +15,10 @@
  *              end the process by itself. Before this mark existed, exactly ONE server
  *              (ase-server-reasoning) bridged kernel-stop to App::quit() in its own main.cpp
  *              loop; the four other tiers kept ticking a stopped kernel forever. The bridge
- *              belongs to the PRODUCER of the stop (KernelCoreLfcSystem stamps this mark in
- *              the same pass that removes KernelCoreRunnTag), and the CONSUMER is App::tick()
+ *              belongs to the PRODUCER of the stop (KernelCoreStopSystem, Schedule::Conclusion,
+ *              stamps this mark in the same pass that removes KernelCoreRunnTag; until
+ *              2026-10-03 that pass sat in the once-only KernelCoreLfcSystem and never saw a
+ *              runtime request), and the CONSUMER is App::tick()
  *              itself - the same shape as the signalfd shutdown watch: the quit is an EVENT
  *              the tick collects.
  *
@@ -28,8 +30,8 @@
  * @category    tag
  * @parity      server_only
  * @created     2026-08-25
- * @modified    2026-08-25
- * @version     1.0.0
+ * @modified    2026-10-03
+ * @version     1.0.1
  * @author      Jan Ohlmann (ADG/ASE/AOW)
  *
  * ECS TAG COMPLIANCE
@@ -68,7 +70,7 @@ namespace ase::ecs {
  * @brief EcsAppQuitReqTag - The process run loop shall end after the current tick
  *
  * State: Some layer above L1 has declared the process done (today: the kernel, in the
- *        same KernelCoreLfcSystem pass that removes KernelCoreRunnTag)
+ *        same KernelCoreStopSystem pass that removes KernelCoreRunnTag)
  * Filter: App::tick() takes registry.view<EcsAppQuitReqTag>() and stops on non-empty
  * Added: By the producer of the stop decision - never by App itself
  * Removed: Never - presence is terminal, App::shutdown() tears the registry down with it

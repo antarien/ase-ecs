@@ -411,7 +411,7 @@ public:
      * nach der Vereinheitlichung der Server-Schleifen (alle fuenf Tiers rufen run()) baumweit
      * null Aufrufer. Beenden laeuft als EREIGNIS, das tick() abholt — SIGINT/SIGTERM ueber die
      * signalfd-Wache, ein fachlicher Stopp ueber EcsAppQuitReqTag (Producer heute:
-     * KernelCoreLfcSystem). Eine eigene while(is_running())-Schleife je Server war die
+     * KernelCoreStopSystem, Schedule::Conclusion). Eine eigene while(is_running())-Schleife je Server war die
      * Bauform, aus der beide Methoden lebten; sie existiert nicht mehr.
      */
     void run_schedule(Schedule schedule, float dt);
