@@ -12,8 +12,8 @@
  * @layer       1 (Core)
  * @category    process/computation/algorithm
  * @created     2026-02-01
- * @modified    2026-08-20
- * @version     1.0.0
+ * @modified    2026-10-06
+ * @version     1.1.0
  *
  * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
  *
@@ -167,6 +167,8 @@ TickScheduler::TickScheduler() {
 
 void TickScheduler::reset() {
     accumulators_.fill(0.0f);
+    tier_runs_.fill(0u);
+    tick_count_ = 0u;
 }
 
 void TickScheduler::tick(float dt, ScheduleRunner run, void* user) {
@@ -185,6 +187,7 @@ void TickScheduler::tick(float dt, ScheduleRunner run, void* user) {
             for (size_t i = 0; i < config.schedule_count; ++i) {
                 run(user, config.schedules[i], dt);
             }
+            ++tier_runs_[tier];
         } else if (config.fixed_timestep) {
             // Fixed timestep (physics): use while-loop
             accumulators_[tier] += dt;
@@ -192,6 +195,7 @@ void TickScheduler::tick(float dt, ScheduleRunner run, void* user) {
                 for (size_t i = 0; i < config.schedule_count; ++i) {
                     run(user, config.schedules[i], config.interval);
                 }
+                ++tier_runs_[tier];
                 accumulators_[tier] -= config.interval;
             }
         } else {
@@ -201,6 +205,7 @@ void TickScheduler::tick(float dt, ScheduleRunner run, void* user) {
                 for (size_t i = 0; i < config.schedule_count; ++i) {
                     run(user, config.schedules[i], config.interval);
                 }
+                ++tier_runs_[tier];
                 accumulators_[tier] -= config.interval;
             }
         }
@@ -208,6 +213,23 @@ void TickScheduler::tick(float dt, ScheduleRunner run, void* user) {
 
     // Conclusion always runs at end of frame
     run(user, Schedule::Conclusion, dt);
+    ++tick_count_;
+}
+
+uint64_t TickScheduler::runs(Schedule schedule) const noexcept {
+    // Conclusion stands in no tier table: tick() runs it once after the tiers, every tick.
+    if (schedule == Schedule::Conclusion) {
+        return tick_count_;
+    }
+    const TierConfig* configs = get_tier_configs();
+    for (size_t tier = 0; tier < TIER_COUNT; ++tier) {
+        for (size_t i = 0; i < configs[tier].schedule_count; ++i) {
+            if (configs[tier].schedules[i] == schedule) {
+                return tier_runs_[tier];
+            }
+        }
+    }
+    return 0u;
 }
 
 }  // namespace ase::ecs::internal

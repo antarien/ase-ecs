@@ -14,8 +14,8 @@
  * @layer       1 (Core)
  * @category    ecs/module
  * @created     2025-12-01
- * @modified    2026-10-05
- * @version     1.1.0
+ * @modified    2026-10-06
+ * @version     1.2.0
  *
  * Usage:
  *   ecs::App()
@@ -455,6 +455,19 @@ public:
 
     /** Total number of registered systems across all schedules */
     size_t system_count() const;
+
+    /**
+     * How often the tick scheduler ran one schedule since this App was built.
+     *
+     * Counted by the scheduler where the schedule's tier runs, never derived from simulated
+     * time - a tier that missed its interval or caught up shows in the count. An embedding host
+     * reads it for its measurement line (the Vivarium client: Regulation steps).
+     *
+     * @param schedule the schedule to look up
+     * @return the number of runs; 0 before the first tick and for a schedule the scheduler does
+     *         not drive (lifecycle schedules, game-time schedules)
+     */
+    [[nodiscard]] uint64_t schedule_runs(Schedule schedule) const;
 
     /** Get all system metadata (name, source, schedule, run_after) */
     const ase::containers::Vector<internal::SystemInfo>& system_infos() const;

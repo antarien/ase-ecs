@@ -354,4 +354,32 @@ TEST_CASE("the default constructor keeps the process-owned lifecycle and arms it
     CHECK(app.registry().storage<EcsAppStaShtdComponent>().size() == 0u);
 }
 
+TEST_CASE("schedule_runs counts where the tier runs, not from the time that passed") {
+    App app(APP_LIFE_HOST);
+    app.startup();
+    CHECK(app.schedule_runs(Schedule::Regulation) == 0u);
+    CHECK(app.schedule_runs(Schedule::Conclusion) == 0u);
+
+    // Regulation sits in the Progressive tier, interval 0.5 s. 0.125 is exact in binary, so four
+    // ticks reach the interval exactly once and eight ticks exactly twice.
+    for (int i = 0; i < 4; ++i) {
+        app.tick(0.125f);
+    }
+    CHECK(app.schedule_runs(Schedule::Regulation) == 1u);
+    CHECK(app.schedule_runs(Schedule::Modulation) == 1u);   // same tier, same count
+    CHECK(app.schedule_runs(Schedule::Reception) == 4u);    // Frame tier: every tick
+    CHECK(app.schedule_runs(Schedule::Conclusion) == 4u);   // once at the end of every tick
+
+    for (int i = 0; i < 4; ++i) {
+        app.tick(0.125f);
+    }
+    CHECK(app.schedule_runs(Schedule::Regulation) == 2u);
+    CHECK(app.schedule_runs(Schedule::Conclusion) == 8u);
+
+    // Not driven by the tick scheduler: startup ran Initialization, the scheduler did not.
+    CHECK(app.schedule_runs(Schedule::Initialization) == 0u);
+    CHECK(app.schedule_runs(Schedule::GameDawn) == 0u);
+    app.shutdown();
+}
+
 }  // namespace ase::ecs

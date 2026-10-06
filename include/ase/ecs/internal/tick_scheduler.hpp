@@ -12,8 +12,8 @@
  * @layer       1 (Core)
  * @category    process/computation/algorithm
  * @created     2026-02-01
- * @modified    2026-08-20
- * @version     1.0.0
+ * @modified    2026-10-06
+ * @version     1.1.0
  *
  * CORE INFRASTRUCTURE COMPLIANCE
  *
@@ -129,8 +129,24 @@ public:
      */
     void set_max_frame_time(float max_dt) { max_frame_time_ = max_dt; }
 
+    /**
+     * How often this scheduler ran one schedule since construction or the last reset().
+     *
+     * Counted where the tier runs, never derived from time: every schedule of a tier runs
+     * exactly when its tier runs, so the count of the tier is the count of each of its
+     * schedules, and a fixed-timestep tier that catches up runs - and counts - several times in
+     * one tick. Conclusion runs once at the end of every tick.
+     *
+     * @param schedule the schedule to look up
+     * @return the number of runs; 0 for a schedule this scheduler does not drive (lifecycle
+     *         schedules, game-time schedules)
+     */
+    [[nodiscard]] uint64_t runs(Schedule schedule) const noexcept;
+
 private:
     ase::containers::Array<float, TIER_COUNT> accumulators_;
+    ase::containers::Array<uint64_t, TIER_COUNT> tier_runs_;  // runs of each tier, index as TIER_CONFIGS
+    uint64_t tick_count_ = 0;                                  // ticks, and with them runs of Conclusion
     float max_frame_time_ = 0.25f;
 };
 

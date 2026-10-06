@@ -13,8 +13,8 @@
  * @design      DSGN_016
  * @category    ecs/module
  * @created     2025-12-01
- * @modified    2026-10-05
- * @version     1.1.0
+ * @modified    2026-10-06
+ * @version     1.2.0
  *
  * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
  *
@@ -433,6 +433,10 @@ void App::shutdown() {
 
 size_t App::system_count() const {
     return system_registry_->total_count();
+}
+
+uint64_t App::schedule_runs(Schedule schedule) const {
+    return tick_scheduler_->runs(schedule);
 }
 
 const ase::containers::Vector<internal::SystemInfo>& App::system_infos() const {
