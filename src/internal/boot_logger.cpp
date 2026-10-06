@@ -22,8 +22,8 @@
  * @layer       1 (Core)
  * @category    process/computation
  * @created     2026-02-01
- * @modified    2026-08-20
- * @version     1.0.0
+ * @modified    2026-10-05
+ * @version     1.1.0
  *
  * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
  *
@@ -220,8 +220,7 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
     header += line;
     header += ansi::RESET;
     header += "\n";
-    write_terminal(header);
-    flush_terminal();
+    draw_terminal(config.render_terminal_table,header);
 
     // Track current index per source (for module-local counter)
     ase::containers::HashMap<std::string, size_t> source_current_idx;
@@ -257,8 +256,7 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
             sched_header += ansi::RESET;
         }
         sched_header += "\n";
-        write_terminal(sched_header);
-        flush_terminal();
+        draw_terminal(config.render_terminal_table,sched_header);
 
         std::string prev_source;
         size_t prev_module_count = 0;
@@ -274,8 +272,7 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
                     gap += "│";
                     gap += ansi::RESET;
                     gap += "\n";
-                    write_terminal(gap);
-                    flush_terminal();
+                    draw_terminal(config.render_terminal_table,gap);
                 }
             }
 
@@ -375,8 +372,7 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
             pending += ansi::WHITE;
             pending += info->name;
             pending += ansi::RESET;
-            write_terminal(pending);
-            flush_terminal();
+            draw_terminal(config.render_terminal_table,pending);
 
             // Call on_start. The logger stays silent on stdout here because
             // no console sink is attached yet — that happens in
@@ -405,8 +401,7 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
             done += info->name;
             done += ansi::RESET;
             done += "\n";
-            write_terminal(done);
-            flush_terminal();
+            draw_terminal(config.render_terminal_table,done);
 
             // Dependencies on separate sub-line (all listed, no truncation)
             if (config.show_dependencies and !info->run_after.empty()) {
@@ -423,8 +418,7 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
                 }
                 deps += ansi::RESET;
                 deps += "\n";
-                write_terminal(deps);
-                flush_terminal();
+                draw_terminal(config.render_terminal_table,deps);
             }
         }
     }
@@ -437,8 +431,7 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
         footer += ansi::RESET;
         footer += "\n\n";
     }
-    write_terminal(footer);
-    flush_terminal();
+    draw_terminal(config.render_terminal_table,footer);
 
     // Finalize the logger: attach the console sink (parked in ase-log during
     // LogSystem::on_start), replay the capture-ring — which holds every log
@@ -451,7 +444,7 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
 }
 
 void boot_pending_systems(SystemRegistry& registry, World& world,
-                          const BootLoggerConfig& /*config*/) {
+                          const BootLoggerConfig& config) {
     // Drain pending entries and register them into main lists
     // (deferred during boot to prevent iterator invalidation in print_boot_sequence)
     auto pending = registry.drain_pending();
@@ -508,8 +501,7 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
         section += line;
         section += ansi::RESET;
         section += "\n\n";
-        write_terminal(section);
-        flush_terminal();
+        draw_terminal(config.render_terminal_table,section);
 
         Schedule prev_schedule = static_cast<Schedule>(-1);
 
@@ -553,8 +545,7 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
                         pending_header += ansi::RESET;
                     }
                     pending_header += "\n";
-                    write_terminal(pending_header);
-                    flush_terminal();
+                    draw_terminal(config.render_terminal_table,pending_header);
                     header_printed = true;
                     prev_schedule = schedule;
                 }
@@ -626,8 +617,7 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
                 pending_line += ansi::WHITE;
                 pending_line += system->name();
                 pending_line += ansi::RESET;
-                write_terminal(pending_line);
-                flush_terminal();
+                draw_terminal(config.render_terminal_table,pending_line);
 
                 // MONOTONIC, not the wall clock: this measures how long one on_start took,
                 // and a wall clock can be set - an NTP correction mid-boot would print a
@@ -667,8 +657,7 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
                     done_line += ansi::RESET;
                 }
                 done_line += "\n";
-                write_terminal(done_line);
-                flush_terminal();
+                draw_terminal(config.render_terminal_table,done_line);
 
                 pending_names.erase(it);
             }
@@ -691,8 +680,7 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
     pending_footer += line;
     pending_footer += ansi::RESET;
     pending_footer += "\n\n";
-    write_terminal(pending_footer);
-    flush_terminal();
+    draw_terminal(config.render_terminal_table,pending_footer);
 
     // Die gesammelten Zeilen durch die gemerkten Senken abspielen, dann die Klammer schliessen
     // und die Senken zurueckstellen — der Prozess laeuft weiter und braucht sie.

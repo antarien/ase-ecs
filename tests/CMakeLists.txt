@@ -64,3 +64,36 @@ add_test(NAME ase-ecs-test COMMAND ase-ecs-test)
 set_target_properties(ase-ecs-test PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+#[[
+THE HOST-OWNED LIFECYCLE OF App (APP_LIFE_HOST, PLAN_ASE_VIVARIUM_PHASE_00_CONTRACT section 00.1)
+gets its OWN target and does not become a second source of ase-ecs-test. The reason is the
+warning above: DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN is switched on target-wide, so a second source
+in that target would bring a second main() and break at link time. One source per target keeps
+the target-wide form equivalent here as well.
+
+It needs nothing beyond ase::ecs: the signal-mask probe uses pthread_sigmask, which ase-ecs
+itself calls, and the log-sink probe uses ase::log, which ase::ecs links publicly.
+]]
+add_executable(ase-ecs-host-test
+    test_ecs_host_lifecycle.cpp
+)
+
+target_compile_definitions(ase-ecs-host-test
+    PRIVATE
+        DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+)
+
+target_compile_features(ase-ecs-host-test PRIVATE cxx_std_20)
+
+target_link_libraries(ase-ecs-host-test
+    PRIVATE
+        ase::ecs
+        doctest::doctest
+)
+
+add_test(NAME ase-ecs-host-test COMMAND ase-ecs-host-test)
+
+set_target_properties(ase-ecs-host-test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)

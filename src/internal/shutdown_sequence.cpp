@@ -14,8 +14,8 @@
  * @layer       1 (Core)
  * @category    process/computation
  * @created     2026-02-01
- * @modified    2026-08-20
- * @version     1.0.0
+ * @modified    2026-10-05
+ * @version     1.1.0
  *
  * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
  *
@@ -121,11 +121,13 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
     // dist und replica. Eine Marke, die nur bei eingeschaltetem Debug erscheint, beantwortet
     // die Frage nicht. Das Gegenstueck beim Start steht ebenfalls auf INF.
     //
-    // KEINE ABSCHLUSSZEILE, und das ist kein Versaeumnis: capture_end(false) stellt die
-    // Senken bewusst NICHT zurueck (der Prozess endet hier), eine Zeile danach ginge ins
-    // Leere. Diese Marke belegt den EINTRITT in den Abbau — dass App::shutdown() erreicht
-    // wurde statt eines harten Todes. Fuer den vollstaendigen Verlauf bleibt die Tabelle
-    // zustaendig, dort wo sie hingehoert: am Terminal.
+    // KEINE ABSCHLUSSZEILE IM TIER-SERVER, und das ist kein Versaeumnis: dort stellt
+    // capture_end(false) die Senken bewusst NICHT zurueck (der Prozess endet direkt danach mit
+    // _exit), eine Zeile danach ginge ins Leere. Diese Marke belegt den EINTRITT in den Abbau —
+    // dass App::shutdown() erreicht wurde statt eines harten Todes. Fuer den vollstaendigen
+    // Verlauf bleibt die Tabelle zustaendig, dort wo sie hingehoert: am Terminal.
+    // Ein eingebetteter Host (ShutdownConfig::restore_log_sinks) bekommt seine Senken am Ende
+    // zurueck; dort erreicht auch eine Zeile nach dem Abbau die Datei und den Callback.
     log::info("[Shutdown] sequence entered ({} systems)", total);
 
     // UND SOFORT AUF DIE PLATTE. Ohne diesen Flush existiert die Zeile, erreicht die Datei
@@ -166,8 +168,7 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
     header += line;
     header += ansi::RESET;
     header += "\n";
-    write_terminal(header);
-    flush_terminal();
+    draw_terminal(config.render_terminal_table, header);
 
     // Pre-calculate GLOBAL source totals (total systems per module/plugin)
     ase::containers::HashMap<std::string, size_t> global_source_totals;
@@ -187,8 +188,7 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
     group_header += "(once)";
     group_header += ansi::RESET;
     group_header += "\n";
-    write_terminal(group_header);
-    flush_terminal();
+    draw_terminal(config.render_terminal_table, group_header);
 
     // Call on_stop() for ALL systems in reverse order
     std::string prev_source;
@@ -214,8 +214,7 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
                 gap += "│";
                 gap += ansi::RESET;
                 gap += "\n";
-                write_terminal(gap);
-                flush_terminal();
+                draw_terminal(config.render_terminal_table, gap);
             }
             prev_source = source;
 
@@ -308,8 +307,7 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
             pending += ansi::RESET;
             pending += " ";
             pending += line_suffix;
-            write_terminal(pending);
-            flush_terminal();
+            draw_terminal(config.render_terminal_table, pending);
 
             // Call on_stop
             (*it)->on_stop(world.registry());
@@ -323,9 +321,14 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
             done += " ";
             done += line_suffix;
             done += "\n";
-            write_terminal(done);
-            flush_terminal();
+            draw_terminal(config.render_terminal_table, done);
         }
+    }
+
+    // Every system has stopped; the App still stands. Its lines are still captured and replayed
+    // below with all the others.
+    if (config.after_all_stopped != nullptr) {
+        config.after_all_stopped(config.after_all_stopped_user);
     }
 
     // Footer
@@ -334,8 +337,18 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
     footer += line;
     footer += ansi::RESET;
     footer += "\n\n";
-    write_terminal(footer);
-    flush_terminal();
+    draw_terminal(config.render_terminal_table, footer);
+
+    // DER EINGEBETTETE HOST BEKOMMT SEINE SENKEN ZURUECK - und mit ihnen die Zeilen aus on_stop.
+    // capture_replay spielt sie durch genau die Senken ab, die bei capture_begin aktiv waren
+    // (beim Vivarium-Client: Callback und Datei aus init_tui_standalone), capture_end(true)
+    // haengt diese Senken wieder ein. Der Host lebt nach dem Abbau weiter; jede spaetere Zeile -
+    // Entladen der Plugins, ein Fehler beim Abbau, der naechste Neustart - braucht sie.
+    if (config.restore_log_sinks) {
+        (void)log::capture_replay();
+        log::capture_end(true);
+        return;
+    }
 
     // Replay queued logs to stdout (LogSystem may be stopped)
     const uint32_t captured = log::capture_count();
@@ -377,9 +390,10 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
         flush_terminal();
     }
 
-    // Die Senken werden bewusst NICHT zurueckgestellt: der Prozess endet hier, und die
-    // Klammer hat ihren Inhalt oben bereits auf das Terminal abgespielt. Genau dafuer nimmt
-    // capture_end ein Argument — boot_logger.cpp ruft dieselbe Funktion mit true.
+    // Die Senken werden im Tier-Server bewusst NICHT zurueckgestellt: der Prozess endet hier,
+    // und die Klammer hat ihren Inhalt oben bereits auf das Terminal abgespielt. Genau dafuer
+    // nimmt capture_end ein Argument — boot_logger.cpp und der Host-Zweig oben rufen dieselbe
+    // Funktion mit true.
     log::capture_end(false);
 }
 

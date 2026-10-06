@@ -13,8 +13,8 @@
  * @design      DSGN_016
  * @category    ecs/module
  * @created     2025-12-01
- * @modified    2026-10-03
- * @version     1.0.1
+ * @modified    2026-10-05
+ * @version     1.1.0
  *
  * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
  *
@@ -244,8 +244,13 @@ void close_shutdown_watch(int fd) {
 // =============================================================================
 
 App::App()
+    : App(APP_LIFE_PROCESS) {
+}
+
+App::App(uint8_t lifecycle)
     : tick_scheduler_(std::make_unique<internal::TickScheduler>())
-    , system_registry_(std::make_unique<internal::SystemRegistry>()) {
+    , system_registry_(std::make_unique<internal::SystemRegistry>())
+    , lifecycle_(lifecycle) {
 }
 
 App::~App() = default;
@@ -288,8 +293,17 @@ void App::startup() {
      * Und das Fenster ist nicht kurz: es umfasst den GESAMTEN Boot samt aller Wiederholungen.
      * Haengt eine Verbindung im Retry, ist der Tier ueberhaupt nicht mehr per Strg+C zu
      * beenden — genau der Befund, mit dem dieser Tag begann.
+     *
+     * NUR WENN DIE APP DEN PROZESS BESITZT. Eine eingebettete App (APP_LIFE_HOST, Godot im
+     * Vivarium-Client) fasst die Signale nicht an: die Maske gilt fuer den GANZEN Prozess, und
+     * dort gehoeren SIGINT, SIGTERM, SIGHUP und SIGPIPE dem Host und seiner Plattform. Blockiert
+     * und ueber einen signalfd abgeholt, kaemen sie beim Host nie mehr an. Ohne Wache entsteht
+     * unten auch kein EcsAppStaShtdComponent, also liest tick() kein Signal und shutdown()
+     * schliesst keinen Deskriptor, den diese App nicht selbst geoeffnet hat.
      */
-    const int watch_fd = open_shutdown_watch();
+    const bool host_owned = (lifecycle_ == APP_LIFE_HOST);
+    // Im Host-Betrieb wird der Wert nie gelesen - der Rueckweg unten kommt vor jeder Abfrage.
+    const int watch_fd = host_owned ? 0 : open_shutdown_watch();
 
     // Sort systems by dependencies (FIXED: no null pointer bug)
     auto errors = internal::sort_systems_by_dependencies(*system_registry_);
@@ -307,6 +321,8 @@ void App::startup() {
     // Print boot log and call on_start for each system
     internal::BootLoggerConfig boot_config;
     boot_config.boot_delay_us = boot_delay_us_;
+    // Das Terminal gehoert dem Host: on_start laeuft unveraendert, nur die Tabelle entfaellt.
+    boot_config.render_terminal_table = !host_owned;
     internal::print_boot_sequence(*system_registry_, world_, boot_config);
 
     // Late-System-Registration: if on_start() added new systems (e.g., dlopen modules),
@@ -344,7 +360,13 @@ void App::startup() {
      * still ein Nichts zu sein. Ohne Wache laeuft der Server weiter, aber Strg+C beendet ihn
      * hart: on_stop faellt aus, offene Verbindungen und Puffer werden nicht abgebaut. Das ist
      * genau die Sorte Fehlschlag, die von „Erfolg ohne Arbeit" nicht zu unterscheiden waere.
+     *
+     * Eine eingebettete App hat oben keine Wache geoeffnet und stellt hier keine scharf; ein
+     * Stopp kommt bei ihr als Aufruf von shutdown() durch den Host, nie als Signal.
      */
+    if (host_owned) {
+        return;
+    }
     if (watch_fd < 0) {
         log::warn(log::WRN::CAT::HOST_OP_FAILED, "App", "shutdown_watch_arm",
                   "SIGINT/SIGTERM will terminate hard, on_stop will NOT run");
@@ -389,6 +411,17 @@ void App::shutdown() {
     // Print shutdown sequence and call on_stop for each system
     internal::ShutdownConfig shutdown_config;
     shutdown_config.shutdown_delay_us = shutdown_delay_us_;
+    // Eine eingebettete App zeichnet keine Tabelle und gibt dem Logger seine Senken zurueck: der
+    // Host lebt nach shutdown() weiter und loggt weiter (Entladen der Plugins, naechster Start).
+    const bool host_owned = (lifecycle_ == APP_LIFE_HOST);
+    shutdown_config.render_terminal_table = !host_owned;
+    shutdown_config.restore_log_sinks = host_owned;
+    // After the LAST on_stop, before the log replay: the one point where no system runs and the
+    // App still stands (set_on_stopped).
+    if (on_stopped_callback_ != nullptr) {
+        shutdown_config.after_all_stopped = &App::stopped_trampoline;
+        shutdown_config.after_all_stopped_user = this;
+    }
     internal::print_shutdown_sequence(*system_registry_, world_, shutdown_config);
 
     running_.store(false);
@@ -412,6 +445,11 @@ const ase::containers::Vector<std::unique_ptr<System>>& App::systems_for(Schedul
 
 void App::schedule_trampoline(void* user, Schedule schedule, float sched_dt) {
     static_cast<App*>(user)->run_schedule_measured(schedule, sched_dt);
+}
+
+void App::stopped_trampoline(void* user) {
+    App* app = static_cast<App*>(user);
+    app->on_stopped_callback_(*app);
 }
 
 void App::run_schedule_measured(Schedule schedule, float sched_dt) {
@@ -480,6 +518,21 @@ void App::tick(float dt) {
 }
 
 void App::run() {
+    /**
+     * EINE EINGEBETTETE APP DARF NICHT LAUFEN, NUR GETAKTET WERDEN. run() dreht eine eigene
+     * Schleife und endet mit _exit(0) - im Vivarium-Client hiesse das: Godot verliert seine
+     * Schleife, und beim ersten Stopp verschwindet die ganze Anwendung ohne einen einzigen
+     * Destruktor. Abgewiesen wird ohne Prozessabbruch und ohne die App anzufassen: der Host
+     * hat einen Vertrag verletzt, die App ist danach unveraendert ueber startup/tick/shutdown
+     * bedienbar.
+     */
+    if (lifecycle_ == APP_LIFE_HOST) {
+        log::error(log::ERR::CAT::INPUT_REJECTED, "App", "run",
+                   "host-owned App is driven through startup/tick/shutdown; run() would take "
+                   "the loop and end the process");
+        return;
+    }
+
     startup();
 
     /**

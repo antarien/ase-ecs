@@ -12,8 +12,8 @@
  * @layer       1 (Core)
  * @category    process/computation
  * @created     2026-02-01
- * @modified    2026-08-20
- * @version     1.0.0
+ * @modified    2026-10-05
+ * @version     1.1.0
  *
  * CORE INFRASTRUCTURE COMPLIANCE
  *
@@ -116,6 +116,21 @@ void write_terminal(const std::string& text);
  * announces is worse than none.
  */
 void flush_terminal();
+
+/**
+ * Draw one piece of a sequence table and flush it at once - or nothing at all.
+ *
+ * Every drawing step of the boot and the shutdown view was a pair of write_terminal and
+ * flush_terminal. The pair stands here once, together with the one condition both views share:
+ * the table belongs to whoever owns the terminal. A tier server owns it; an App embedded in a
+ * host that owns the process (APP_LIFE_HOST, e.g. Godot in the Vivarium client) does not, and
+ * its views draw nothing while every on_start and on_stop still runs in the same order.
+ *
+ * @param render false when the App is host-owned (BootLoggerConfig / ShutdownConfig
+ *               render_terminal_table)
+ * @param text   What the caller wants on screen. An empty string writes nothing.
+ */
+void draw_terminal(bool render, const std::string& text);
 
 /**
  * Get terminal width in columns.

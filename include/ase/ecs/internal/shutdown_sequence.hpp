@@ -12,8 +12,8 @@
  * @layer       1 (Core)
  * @category    process/computation
  * @created     2026-02-01
- * @modified    2026-08-20
- * @version     1.0.0
+ * @modified    2026-10-05
+ * @version     1.1.0
  *
  * CORE INFRASTRUCTURE COMPLIANCE
  *
@@ -47,6 +47,21 @@ namespace ase::ecs::internal {
 struct ShutdownConfig {
     int shutdown_delay_us = 0;  // Visual delay per system (microseconds), default: 0 (fast)
     bool show_timestamps = true;
+    // Wie in BootLoggerConfig: die Tabelle zeichnet nur, wer das Terminal besitzt. Ein
+    // eingebetteter Host (App mit APP_LIFE_HOST) setzt false; on_stop laeuft trotzdem fuer
+    // jedes System in derselben umgekehrten Reihenfolge.
+    bool render_terminal_table = true;
+    // Ob der Logger nach dem Abbau seine Senken zurueckbekommt. Ein Tier-Server endet direkt
+    // danach mit _exit(0) und spielt die gesammelten Zeilen selbst aufs Terminal (false,
+    // Vorgabe). Ein eingebetteter Host LEBT nach dem Abbau weiter: ohne Rueckgabe gingen jede
+    // spaetere Logzeile - Entladen der Plugins, Fehler beim Abbau, der naechste Neustart - und
+    // die Zeilen aus on_stop selbst ins Leere (true, App mit APP_LIFE_HOST).
+    bool restore_log_sinks = false;
+    // Gerufen GENAU EINMAL, nachdem das on_stop des LETZTEN Systems zurueckkam - vor Fusszeile und
+    // Log-Wiedergabe, also mit noch mitgeschnittenen Zeilen. Der einzige Punkt, an dem kein System
+    // mehr laeuft und die App noch steht: dort entlaedt der Kernel seine Module (App::set_on_stopped).
+    void (*after_all_stopped)(void* user) = nullptr;
+    void* after_all_stopped_user = nullptr;
 };
 
 /**

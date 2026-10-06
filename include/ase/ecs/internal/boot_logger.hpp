@@ -12,8 +12,8 @@
  * @layer       1 (Core)
  * @category    process/computation
  * @created     2026-02-01
- * @modified    2026-08-20
- * @version     1.0.0
+ * @modified    2026-10-05
+ * @version     1.1.0
  *
  * CORE INFRASTRUCTURE COMPLIANCE
  *
@@ -48,6 +48,11 @@ struct BootLoggerConfig {
     int boot_delay_us = 0;  // Visual delay per system (microseconds), default: 0 (fast)
     bool show_dependencies = true;
     bool show_timestamps = true;
+    // Die Fortschrittstabelle gehoert dem, der das Terminal besitzt. Ein Tier-Server besitzt
+    // es (true, Vorgabe); ein eingebetteter Host wie Godot im Vivarium-Client besitzt es nicht
+    // und bekommt keine Tabelle (false, App mit APP_LIFE_HOST). on_start laeuft in BEIDEN
+    // Faellen in derselben Reihenfolge - unterdrueckt wird nur das Zeichnen.
+    bool render_terminal_table = true;
 };
 
 /**

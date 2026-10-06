@@ -50,8 +50,8 @@
  * @layer       1 (Core)
  * @category    ecs/module
  * @created     2026-01-16
- * @modified    2026-08-20
- * @version     1.1.0
+ * @modified    2026-10-05
+ * @version     1.2.0
  *
  * CORE INFRASTRUCTURE COMPLIANCE
  *
@@ -80,45 +80,21 @@
  * management. The Kernel's ModuleLoader discovers and loads these at
  * runtime via dlopen/dlsym.
  *
- * Usage in a Module (L3):
+ * USAGE - read at a real export site, not at a copy in this L1 header.
+ * The copy that stood here named an L3 and an L4 header from inside L1 (an
+ * upward edge, register C0024), passed four callbacks to macros that take
+ * five, and had a plugin reach for ase-ecs directly - three faults a
+ * reference copy picks up the moment the original moves on. Measured
+ * 2026-10-05, the two forms in the tree:
  *
- *   #include <ase/ecs/plugin_interface.hpp>
- *   #include <ase/hub/hub_module.hpp>
- *
- *   static AseModuleInfo get_info() {
- *       return { "ase-hub", "0.19.25", ASE_API_VERSION, 3 };
- *   }
- *
- *   static uint32_t on_load(AseLoadContext* ctx) {
- *       ase::hub::HubModule instance;
- *       instance.build(*ctx->app);
- *       return ASE_LOAD_OK;
- *   }
- *
- *   static uint32_t on_unload(AseLoadContext*) { return ASE_LOAD_OK; }
- *   static void cleanup() {}
- *
- *   ASE_MODULE_EXPORT(get_info, on_load, on_unload, cleanup)
- *
- * Usage in a Plugin (L4):
- *
- *   #include <ase/ecs/plugin_interface.hpp>
- *   #include <ase/pl-sky/sky_plugin.hpp>
- *
- *   static AseModuleInfo get_info() {
- *       return { "ase-pl-sky", "0.1.7", ASE_API_VERSION, 4 };
- *   }
- *
- *   static uint32_t on_load(AseLoadContext* ctx) {
- *       ase::sky::SkyPlugin instance;
- *       instance.build(*ctx->app);
- *       return ASE_LOAD_OK;
- *   }
- *
- *   static uint32_t on_unload(AseLoadContext*) { return ASE_LOAD_OK; }
- *   static void cleanup() {}
- *
- *   ASE_PLUGIN_EXPORT(get_info, on_load, on_unload, cleanup)
+ *   Module (L3)   modules/ase-hub/src/module_export.cpp - this header, then
+ *                 the module's own header; ASE_MODULE_EXPORT with get_info,
+ *                 on_load, on_unload, on_config_changed, cleanup.
+ *   Plugin (L4)   plugins/ase-pl-vegetation/src/module_export.cpp - this
+ *                 header ONLY through the SDK facade (sdk/plugin_interface.hpp),
+ *                 then the plugin's own header; ASE_PLUGIN_EXPORT with the same
+ *                 five callbacks. get_info answers name, version,
+ *                 ASE_API_VERSION and the layer (3 or 4).
  *
  * References:
  *   ARCH_ASE_PLUGIN.md - Plugin Development Guide
@@ -206,10 +182,23 @@ struct AseModuleInterface {
 // =============================================================================
 // Export Macros
 // =============================================================================
+//
+// PROTECTED, NOT DEFAULT VISIBILITY - measured 2026-10-05.
+// Every module exports the SAME name, and the kernel loader opens each one with
+// RTLD_GLOBAL (load_entry in kernel_module_resource_manager.cpp). The fix sits on
+// the symbol, not on that flag, so it holds under either load form. With default visibility
+// the first loaded library's definition entered the global scope, and each
+// library loaded after it bound ITS OWN reference to that one: AddressSanitizer
+// reported one address registered by two libraries (odr-violation,
+// ase-kernel-embedded-test loading two probe plugins). Protected keeps the symbol
+// exported - dlsym finds it exactly as before - and binds every reference inside
+// the defining library to its own definition. Name, layout and ASE_API_VERSION
+// are unchanged.
 
 // L3 Module: exports symbol "ase_module_interface"
 #define ASE_MODULE_EXPORT(info_fn, load_fn, unload_fn, cfg_fn, cleanup_fn) \
     extern "C" {                                                          \
+        __attribute__((visibility("protected")))                           \
         AseModuleInterface ase_module_interface = {                        \
             /* .get_info          = */ info_fn,                            \
             /* .on_load           = */ load_fn,                            \
@@ -222,6 +211,7 @@ struct AseModuleInterface {
 // L4 Plugin: exports symbol "ase_plugin_interface"
 #define ASE_PLUGIN_EXPORT(info_fn, load_fn, unload_fn, cfg_fn, cleanup_fn) \
     extern "C" {                                                          \
+        __attribute__((visibility("protected")))                           \
         AseModuleInterface ase_plugin_interface = {                        \
             /* .get_info          = */ info_fn,                            \
             /* .on_load           = */ load_fn,                            \

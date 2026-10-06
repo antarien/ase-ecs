@@ -13,8 +13,8 @@
  * @layer       1 (Core)
  * @category    process/computation
  * @created     2026-02-01
- * @modified    2026-08-20
- * @version     1.0.0
+ * @modified    2026-10-05
+ * @version     1.1.0
  *
  * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
  *
@@ -62,6 +62,14 @@ void write_terminal(const std::string& text) {
 
 void flush_terminal() {
     std::fflush(stdout);
+}
+
+void draw_terminal(bool render, const std::string& text) {
+    if (!render) {
+        return;
+    }
+    write_terminal(text);
+    flush_terminal();
 }
 
 int get_terminal_width() {

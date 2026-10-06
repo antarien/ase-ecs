@@ -14,8 +14,8 @@
  * @layer       1 (Core)
  * @category    ecs/module
  * @created     2025-12-01
- * @modified    2026-08-20
- * @version     1.0.0
+ * @modified    2026-10-05
+ * @version     1.1.0
  *
  * Usage:
  *   ecs::App()
@@ -109,6 +109,16 @@ const char* get_version() {
 constexpr uint8_t APP_PLANE_SIM  = 0;  // regionsgebundene Simulation (Vorgabe jedes Moduls)
 constexpr uint8_t APP_PLANE_KERN = 1;  // Infrastruktur: tickt immer (Netz, Persist, Kernel)
 
+// Wem der PROZESS gehoert, in dem diese App laeuft. GENAU ZWEI Faelle, beide mit einem Ort im
+// Baum: die fuenf Tier-Server, deren main() die App IST - sie blockiert SIGINT/SIGTERM/SIGHUP/
+// SIGPIPE prozessweit, dreht in run() ihre eigene Schleife und beendet den Prozess mit _exit(0);
+// und ein eingebetteter Host, dem Prozess, Schleife, Signale und Terminal gehoeren (Godot im
+// Vivarium-Client, PLAN_ASE_VIVARIUM_PHASE_00_CONTRACT Abschnitt 00.1). Dort ist die App Gast:
+// startup/tick/shutdown auf Zuruf, keine Signalwache, keine Aenderung der Signalmaske, keine
+// Fortschrittstabelle, kein run(). Die Simulation selbst ist in beiden Faellen dieselbe.
+constexpr uint8_t APP_LIFE_PROCESS = 0;  // die App besitzt den Prozess (Tier-Server, Vorgabe)
+constexpr uint8_t APP_LIFE_HOST    = 1;  // ein Host besitzt den Prozess (eingebettete App)
+
 // Forward declarations
 class App;
 class SystemBuilder;
@@ -191,7 +201,19 @@ public:
     // liest Kommentare mit, und ein Name, den man zur Erklaerung seiner Abschaffung ausschreibt,
     // meldet sich sonst als genau der Verstoss, den man gerade entfernt hat.
 
+    /** Process-owned App (APP_LIFE_PROCESS) - the form every tier server builds. */
     App();
+
+    /**
+     * App with an explicit owner of the process.
+     *
+     * @param lifecycle APP_LIFE_PROCESS (same as App()) or APP_LIFE_HOST for an App embedded in
+     *                  a host that owns process, loop, signals and terminal. Host-owned, startup()
+     *                  arms no signal watch and leaves the signal mask untouched, neither sequence
+     *                  draws a terminal table, shutdown() hands the log sinks back, and run() is
+     *                  refused - the host drives startup/tick/shutdown itself.
+     */
+    explicit App(uint8_t lifecycle);
     ~App();
 
     App(const App&) = delete;
@@ -381,8 +403,10 @@ public:
     // =========================================================================
 
     /**
-     * Full run: startup + main loop + shutdown.
-     * Use this for simple apps without custom integration logic.
+     * Full run: startup + main loop + shutdown, then the process ends with _exit(0).
+     * The form of the five tier servers. A host-owned App (APP_LIFE_HOST) refuses it with an
+     * error line and returns without touching the App: the loop and the process belong to the
+     * host, which drives startup/tick/shutdown itself.
      */
     void run();
 
@@ -441,6 +465,14 @@ public:
     /** Set callback invoked during shutdown (port of setOnDestroyCallback) */
     void set_on_destroy(void(*callback)()) { on_destroy_callback_ = callback; }
 
+    /**
+     * Set callback invoked ONCE in shutdown(), after the on_stop of the LAST system returned and
+     * while the App still exists. set_on_destroy fires at the START of shutdown, before
+     * Finalization; this one fires at its END. The kernel unloads its modules here: no system
+     * runs any more, so no on_stop can meet a module that was already cleaned up.
+     */
+    void set_on_stopped(void(*callback)(App& app)) { on_stopped_callback_ = callback; }
+
     /** Access SystemRegistry for Hot-Reload (remove_systems_by_source) */
     internal::SystemRegistry& system_registry() { return *system_registry_; }
 
@@ -452,6 +484,9 @@ public:
     int cli_argc() const { return cli_argc_; }
     char** cli_argv() const { return cli_argv_; }
 
+    /** Owner of the process this App runs in: APP_LIFE_PROCESS or APP_LIFE_HOST. */
+    [[nodiscard]] uint8_t lifecycle() const { return lifecycle_; }
+
 private:
     /**
      * Entry point the tick scheduler calls back into, once per due schedule.
@@ -462,6 +497,9 @@ private:
      * in run_schedule_measured so the trampoline stays the one line it should be.
      */
     static void schedule_trampoline(void* user, Schedule schedule, float sched_dt);
+
+    /** Same shape for the shutdown sequence: recovers the App and hands it to on_stopped_callback_. */
+    static void stopped_trampoline(void* user);
 
     /** Runs one schedule; brackets Dynamics with the wall-clock measurement for kernel stats. */
     void run_schedule_measured(Schedule schedule, float sched_dt);
@@ -487,8 +525,11 @@ private:
     int boot_delay_us_ = 0;
     int shutdown_delay_us_ = 0;
     void(*on_destroy_callback_)() = nullptr;
+    void(*on_stopped_callback_)(App& app) = nullptr;
     int cli_argc_ = 0;
     char** cli_argv_ = nullptr;
+    // Fest ab dem Konstruktor: wer den Prozess besitzt, entscheidet sich nicht im Lauf.
+    uint8_t lifecycle_ = APP_LIFE_PROCESS;
 };
 
 // =============================================================================
