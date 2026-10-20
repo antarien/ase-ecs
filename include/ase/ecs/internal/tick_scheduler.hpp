@@ -12,8 +12,8 @@
  * @layer       1 (Core)
  * @category    process/computation/algorithm
  * @created     2026-02-01
- * @modified    2026-10-06
- * @version     1.1.0
+ * @modified    2026-10-07
+ * @version     1.2.0
  *
  * CORE INFRASTRUCTURE COMPLIANCE
  *
@@ -128,6 +128,16 @@ public:
      * Set maximum frame time (clamped if exceeded).
      */
     void set_max_frame_time(float max_dt) { max_frame_time_ = max_dt; }
+
+    /**
+     * The longest frame tick() takes as it is; a longer dt is clamped to it and the rest is lost.
+     *
+     * Read by whoever has to bring a long real span into the App WITHOUT losing it: the embedded
+     * host after the app returns from the background splits the span into ticks of exactly this
+     * length (KernelEmbeddedHost::advance). Read here, from the running scheduler, so that no
+     * caller keeps a second copy of the number.
+     */
+    [[nodiscard]] float max_frame_time() const noexcept { return max_frame_time_; }
 
     /**
      * How often this scheduler ran one schedule since construction or the last reset().

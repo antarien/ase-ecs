@@ -11,9 +11,10 @@
  * @module      ase-ecs
  * @layer       1 (Core)
  * @category    process/computation/algorithm
+ * @usecase     usecase:100357 - run the tick loop
  * @created     2026-02-01
- * @modified    2026-10-06
- * @version     1.1.0
+ * @modified    2026-10-19
+ * @version     1.1.1
  *
  * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
  *
@@ -35,9 +36,7 @@
 
 namespace ase::ecs::internal {
 
-// =============================================================================
 // SCHEDULE ARRAYS (grouped by tier)
-// =============================================================================
 
 const Schedule FRAME_SCHEDULES[] = {
     Schedule::Reception,
@@ -118,9 +117,7 @@ const Schedule DIURNAL_SCHEDULES[] = {
     Schedule::Renewal,
 };
 
-// =============================================================================
 // TIER CONFIGURATION TABLE
-// =============================================================================
 
 static const TierConfig TIER_CONFIGS[TIER_COUNT] = {
     // Frame (~60Hz) - every tick
@@ -157,9 +154,7 @@ const TierConfig* get_tier_configs() {
     return TIER_CONFIGS;
 }
 
-// =============================================================================
 // TICK SCHEDULER IMPLEMENTATION
-// =============================================================================
 
 TickScheduler::TickScheduler() {
     reset();

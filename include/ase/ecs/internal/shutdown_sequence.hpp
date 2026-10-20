@@ -11,8 +11,9 @@
  * @module      ase-ecs
  * @layer       1 (Core)
  * @category    process/computation
+ * @usecase     usecase:100356 - run the shutdown sequence
  * @created     2026-02-01
- * @modified    2026-10-05
+ * @modified    2026-10-11
  * @version     1.1.0
  *
  * CORE INFRASTRUCTURE COMPLIANCE
@@ -38,6 +39,8 @@
 
 #include <ase/ecs/internal/system_registry.hpp>
 #include <ase/ecs/system.hpp>
+// The World every system is stopped against.
+#include <ase/ecs/world.hpp>
 
 namespace ase::ecs::internal {
 

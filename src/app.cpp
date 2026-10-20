@@ -13,8 +13,8 @@
  * @design      DSGN_016
  * @category    ecs/module
  * @created     2025-12-01
- * @modified    2026-10-06
- * @version     1.2.0
+ * @modified    2026-10-07
+ * @version     1.3.0
  *
  * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
  *
@@ -437,6 +437,10 @@ size_t App::system_count() const {
 
 uint64_t App::schedule_runs(Schedule schedule) const {
     return tick_scheduler_->runs(schedule);
+}
+
+float App::frame_time_max() const {
+    return tick_scheduler_->max_frame_time();
 }
 
 const ase::containers::Vector<internal::SystemInfo>& App::system_infos() const {

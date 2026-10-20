@@ -13,9 +13,10 @@
  * @module      ase-ecs
  * @layer       1 (Core)
  * @category    ecs/module
+ * @usecase     usecase:100357 - run the tick loop
  * @created     2025-12-01
- * @modified    2026-10-06
- * @version     1.2.0
+ * @modified    2026-10-11
+ * @version     1.3.0
  *
  * Usage:
  *   ecs::App()
@@ -47,6 +48,8 @@
 
 #include "schedule.hpp"
 #include "system.hpp"
+// App holds its World by value, so the full definition is needed here.
+#include "world.hpp"
 #include "internal/system_registry.hpp"
 
 #include <atomic>
@@ -60,27 +63,14 @@
 
 namespace ase::ecs {
 
-// =============================================================================
-// Version Detection Helper
-// =============================================================================
+// VERSION DETECTION HELPER
 
 namespace detail {
 
-/* DIE ERKENNUNG STEHT JETZT DA, WO SIE GEBRAUCHT WIRD, statt in einem Merkmalstyp daneben.
- *
- * Bis 2026-08-22 waren das drei Deklarationen: eine Vorlage mit Vorgabeparameter, eine
- * Teilspezialisierung ueber std::void_t<decltype(T::version())> und eine Variablenvorlage
- * darueber. Das ist die klassische SFINAE-Erkennung — und sie war schon vor C++20 die
- * umstaendlichste Art, EINE Frage zu stellen.
- *
- * Der requires-Ausdruck fragt dieselbe Frage in einer Zeile: laesst sich T::version()
- * hinschreiben. Kein Merkmalstyp, keine Teilspezialisierung, kein void_t. Das ist die HAUSFORM
- * DIESER DATEI und keine von mir gewaehlte - direkt darunter stehen die Konzepte Kernel, Module
- * und Plugin, die genau so gebaut sind.
- *
- * VERHALTEN UNVERAENDERT: `if constexpr` waehlte vorher wie nachher zur Uebersetzungszeit, und
- * beide Zweige sind dieselben geblieben. Wer version() hat, bekommt es; wer nicht, den leeren
- * String.
+/* THE DETECTION STANDS WHERE IT IS USED, as one requires expression: can T::version() be
+ * written. No trait type, no partial specialisation, no void_t - the house form of this file,
+ * the same the concepts Kernel, Module and Plugin below are built in. `if constexpr` chooses at
+ * compile time: whoever has version() gets it, whoever has not, the empty string.
  */
 
 // Get version if available, otherwise return empty string
@@ -128,9 +118,7 @@ class TickScheduler;
 class SystemRegistry;
 }  // namespace internal
 
-// =============================================================================
-// Kernel Concept (Layer 2) - Core kernel, foundation for modules/plugins
-// =============================================================================
+// KERNEL CONCEPT (Layer 2) - core kernel, foundation for modules/plugins
 
 template<typename T>
 concept Kernel = requires(T kernel, App& app) {
@@ -138,9 +126,7 @@ concept Kernel = requires(T kernel, App& app) {
     { T::name() } -> std::convertible_to<const char*>;
 };
 
-// =============================================================================
-// Module Concept (Layer 3) - Core game systems, statically linked
-// =============================================================================
+// MODULE CONCEPT (Layer 3) - core game systems, statically linked
 
 template<typename T>
 concept Module = requires(T module, App& app) {
@@ -148,9 +134,7 @@ concept Module = requires(T module, App& app) {
     { T::name() } -> std::convertible_to<const char*>;
 };
 
-// =============================================================================
-// Plugin Concept (Layer 4) - Optional, hot-loadable features
-// =============================================================================
+// PLUGIN CONCEPT (Layer 4) - optional, hot-loadable features
 
 template<typename T>
 concept Plugin = requires(T plugin, App& app) {
@@ -158,9 +142,7 @@ concept Plugin = requires(T plugin, App& app) {
     { T::name() } -> std::convertible_to<const char*>;
 };
 
-// =============================================================================
-// SystemBuilder - Fluent API for system configuration
-// =============================================================================
+// SYSTEMBUILDER - fluent API for system configuration
 
 class SystemBuilder {
 public:
@@ -184,22 +166,13 @@ private:
     bool finalized_ = false;
 };
 
-// =============================================================================
-// App - Bevy-Style Application Builder
-// =============================================================================
+// APP - application builder
 
 class App {
 public:
-    // Hier standen drei Typaliase auf die monotone Uhr der Standardbibliothek. Sie waren
-    // oeffentlich, aber GEMESSEN nutzte sie ausserhalb dieses Moduls niemand (App::Clock,
-    // App::Duration, App::TimePoint: je 0 Treffer im gesamten Quellbaum). Die Zeitachse laeuft
-    // jetzt ueber utils::monotonic_nanos() — dieselbe monotone Quelle, nur als int64_t
-    // Nanosekunden statt als Typfamilie. clock.hpp nennt genau diesen Fall: eine Dauer, ein
-    // Zeitlimit, eine Frame- oder Tickzeit gehoert dorthin, ein Stichtag an wall_time_seconds().
-    //
-    // Die Namen der ersetzten Typen stehen hier bewusst OHNE ihren Namensraum: ein Detektor
-    // liest Kommentare mit, und ein Name, den man zur Erklaerung seiner Abschaffung ausschreibt,
-    // meldet sich sonst als genau der Verstoss, den man gerade entfernt hat.
+    // The time axis runs over utils::monotonic_nanos(): one monotonic source as int64_t
+    // nanoseconds, no family of clock types. clock.hpp names where a duration, a deadline or a
+    // frame time belongs and where a calendar date belongs (wall_time_seconds()).
 
     /** Process-owned App (APP_LIFE_PROCESS) - the form every tier server builds. */
     App();
@@ -219,9 +192,7 @@ public:
     App(const App&) = delete;
     App& operator=(const App&) = delete;
 
-    // =========================================================================
-    // Builder API
-    // =========================================================================
+    // BUILDER API
 
     /**
      * Set current source for system registration logging.
@@ -398,9 +369,7 @@ public:
     const std::string& current_source() const { return current_source_; }
     const std::string& current_version() const { return current_version_; }
 
-    // =========================================================================
-    // Lifecycle
-    // =========================================================================
+    // LIFECYCLE
 
     /**
      * Full run: startup + main loop + shutdown, then the process ends with _exit(0).
@@ -431,27 +400,21 @@ public:
     /**
      * Run a specific schedule manually.
      *
-     * quit() und is_running() standen hier und sind GELOESCHT, nicht versteckt: beide hatten
-     * nach der Vereinheitlichung der Server-Schleifen (alle fuenf Tiers rufen run()) baumweit
-     * null Aufrufer. Beenden laeuft als EREIGNIS, das tick() abholt — SIGINT/SIGTERM ueber die
-     * signalfd-Wache, ein fachlicher Stopp ueber EcsAppQuitReqTag (Producer heute:
-     * KernelCoreStopSystem, Schedule::Conclusion). Eine eigene while(is_running())-Schleife je Server war die
-     * Bauform, aus der beide Methoden lebten; sie existiert nicht mehr.
+     * Ending runs as an EVENT that tick() picks up: SIGINT/SIGTERM over the signalfd watch, a
+     * functional stop over EcsAppQuitReqTag (producer: KernelCoreStopSystem, Schedule::Conclusion).
+     * There is no quit()/is_running() pair and no server loop of its own around it - all five
+     * tiers call run().
      */
     void run_schedule(Schedule schedule, float dt);
 
-    // =========================================================================
-    // World Access
-    // =========================================================================
+    // WORLD ACCESS
 
     World& world() { return world_; }
     const World& world() const { return world_; }
     Registry& registry() { return world_.registry(); }
     const Registry& registry() const { return world_.registry(); }
 
-    // =========================================================================
-    // Introspection API (port of systemRegistry.ts getSystemCount/getAllSystems)
-    // =========================================================================
+    // INTROSPECTION API (port of systemRegistry.ts getSystemCount/getAllSystems)
 
     /** Total number of registered systems across all schedules */
     size_t system_count() const;
@@ -468,6 +431,19 @@ public:
      *         not drive (lifecycle schedules, game-time schedules)
      */
     [[nodiscard]] uint64_t schedule_runs(Schedule schedule) const;
+
+    /**
+     * The longest frame tick() takes as it is, read from the tick scheduler.
+     *
+     * A longer dt is clamped to this length and the remainder is LOST, not deferred. A host that
+     * owns the loop and has to make up a long real span - the embedded host after the app comes
+     * back from the background - therefore ticks in steps of exactly this length
+     * (KernelEmbeddedHost::advance), so every schedule runs as often as the span demands and no
+     * module computes a giant step.
+     *
+     * @return the frame-time ceiling in seconds
+     */
+    [[nodiscard]] float frame_time_max() const;
 
     /** Get all system metadata (name, source, schedule, run_after) */
     const ase::containers::Vector<internal::SystemInfo>& system_infos() const;
@@ -545,9 +521,7 @@ private:
     uint8_t lifecycle_ = APP_LIFE_PROCESS;
 };
 
-// =============================================================================
-// SystemBuilder Implementation (inline)
-// =============================================================================
+// SYSTEMBUILDER IMPLEMENTATION (inline)
 
 inline SystemBuilder::SystemBuilder(App& app, Schedule schedule, std::unique_ptr<System> system)
     : app_(app), schedule_(schedule), system_(std::move(system)),
