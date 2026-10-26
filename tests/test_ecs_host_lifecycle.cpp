@@ -18,11 +18,15 @@
  *              3. THE LOGGER. A tier server ends right after shutdown and drops the log sinks on
  *                 purpose. A host lives on: a line written after shutdown still has to reach the
  *                 host's sink.
+ *              4. THE GAME-TIME EVENTS. A request entity fires its game-time schedule once per
+ *                 tick, in the order of its sequence, with its game seconds as dt, and is
+ *                 consumed (ARCH_ASE_SCHEDULE section 6.3).
  *
  *              EVERY CHECK HAS ITS POSITIVE CONTROL IN THIS FILE. The mask probe is shown to see
- *              a change on the process-owned path (SIGINT blocked after startup), and the sink
- *              probe is shown to miss a line on the process-owned path (sinks dropped). Without
- *              them a probe that can never see anything would pass every host case.
+ *              a change on the process-owned path (SIGINT blocked after startup), the sink probe
+ *              is shown to miss a line on the process-owned path (sinks dropped), and the event
+ *              case first shows that no game-time schedule runs without a request. Without them a
+ *              probe that can never see anything would pass every case.
  *
  *              ITS OWN TARGET, NOT A SECOND SOURCE OF ase-ecs-test: that target switches the
  *              doctest entry point on for every translation unit, and a second source would bring
@@ -31,9 +35,11 @@
  * @module      ase-ecs
  * @layer       1 (Core)
  * @category    process/validation/check
+ * @usecase     usecase:100357 - run the tick loop
+ * @actor       Entity Component System (ECS)
  * @created     2026-10-05
- * @modified    2026-10-05
- * @version     1.0.0
+ * @modified    2026-10-25
+ * @version     1.1.0
  *
  * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
  *
@@ -55,6 +61,7 @@
 
 #include <ase/ecs/app.hpp>
 #include <ase/ecs/system.hpp>
+#include <ase/ecs/components/app/request/ecs_app_req_schd_comp.hpp>
 #include <ase/ecs/components/app/state/ecs_app_sta_shtd_comp.hpp>
 #include <ase/log/log.hpp>
 #include <ase/log/log_lifecycle.hpp>
@@ -68,9 +75,7 @@
 
 namespace ase::ecs {
 
-// ============================================================================
-// Test fixtures
-// ============================================================================
+// TEST FIXTURES
 
 // How often each lifecycle schedule reached the App. One row on one entity; the two systems
 // below count into it, so neither the App nor a system carries test state.
@@ -84,6 +89,14 @@ struct HostLifeStopsComponent {
     uint32_t stops = 0;
     uint32_t stops_seen_by_callback = 0;
     uint32_t callbacks = 0;
+};
+
+// What the two game-time systems saw: their runs, the dt of the dawn, and which fired first.
+struct HostLifeEventsComponent {
+    uint32_t dawn_runs = 0;
+    uint32_t dusk_runs = 0;
+    float dawn_dt = 0.0f;
+    uint32_t first = 0;  // 0 = none yet, 1 = the dawn fired first, 2 = the dusk fired first
 };
 
 // What the host's log sink received: every line, and every line carrying `marker`.
@@ -115,6 +128,38 @@ public:
         for (auto [entity, runs] : registry.view<HostLifeRunsComponent>().each()) {
             (void)entity;
             runs.finalization += 1u;
+        }
+    }
+};
+
+class HostLifeDawnSystem : public ecs::System {
+public:
+    const char* name() const override { return "HostLifeDawnSystem"; }
+
+    void tick(Registry& registry, float dt) override {
+        for (auto [entity, events] : registry.view<HostLifeEventsComponent>().each()) {
+            (void)entity;
+            events.dawn_runs += 1u;
+            events.dawn_dt = dt;
+            if (events.first == 0u) {
+                events.first = 1u;
+            }
+        }
+    }
+};
+
+class HostLifeDuskSystem : public ecs::System {
+public:
+    const char* name() const override { return "HostLifeDuskSystem"; }
+
+    void tick(Registry& registry, float dt) override {
+        (void)dt;
+        for (auto [entity, events] : registry.view<HostLifeEventsComponent>().each()) {
+            (void)entity;
+            events.dusk_runs += 1u;
+            if (events.first == 0u) {
+                events.first = 2u;
+            }
         }
     }
 };
@@ -170,9 +215,7 @@ void count_host_line(const char* line, uint32_t len, int level, void* user) {
 
 }  // anonymous namespace
 
-// ============================================================================
-// Test cases
-// ============================================================================
+// TEST CASES
 
 TEST_CASE("host-owned App leaves the signal mask as it found it through startup, tick and shutdown") {
     const bool int_before  = blocked(SIGINT);
@@ -376,9 +419,70 @@ TEST_CASE("schedule_runs counts where the tier runs, not from the time that pass
     CHECK(app.schedule_runs(Schedule::Regulation) == 2u);
     CHECK(app.schedule_runs(Schedule::Conclusion) == 8u);
 
-    // Not driven by the tick scheduler: startup ran Initialization, the scheduler did not.
+    // Not driven by the tick scheduler: startup ran Initialization, the scheduler did not. No
+    // calendar requested a game-time event, so none fired.
     CHECK(app.schedule_runs(Schedule::Initialization) == 0u);
     CHECK(app.schedule_runs(Schedule::GameDawn) == 0u);
+    app.shutdown();
+}
+
+TEST_CASE("a game-time request fires its schedule once, in the order of its sequence, with its game seconds") {
+    App app(APP_LIFE_HOST);
+    app.add_system<HostLifeDawnSystem>(Schedule::GameDawn);
+    app.add_system<HostLifeDuskSystem>(Schedule::GameDusk);
+    app.startup();
+
+    Registry& registry = app.registry();
+    const auto row = registry.create();
+    registry.emplace<HostLifeEventsComponent>(row);
+
+    // POSITIVE CONTROL: without a request no game-time schedule runs, however many ticks pass.
+    for (int i = 0; i < 4; ++i) {
+        app.tick(0.125f);
+    }
+    CHECK(registry.get<HostLifeEventsComponent>(row).dawn_runs == 0u);
+    CHECK(registry.get<HostLifeEventsComponent>(row).dusk_runs == 0u);
+    CHECK(app.schedule_runs(Schedule::GameDawn) == 0u);
+
+    // Two crossings in one tick. The dusk request is created FIRST with the LOWER sequence: EnTT
+    // iterates a storage from the last insertion back, so without the sort the dawn would fire
+    // first, and this order tells the two apart.
+    const auto dusk_request = registry.create();
+    auto& dusk = registry.emplace<EcsAppReqSchdComponent>(dusk_request);
+    dusk.schedule = static_cast<uint32_t>(Schedule::GameDusk);
+    dusk.sequence = 1u;
+    dusk.game_dt = 1800.0f;
+    const auto dawn_request = registry.create();
+    auto& dawn = registry.emplace<EcsAppReqSchdComponent>(dawn_request);
+    dawn.schedule = static_cast<uint32_t>(Schedule::GameDawn);
+    dawn.sequence = 2u;
+    dawn.game_dt = 3600.0f;
+
+    app.tick(0.125f);
+    CHECK(registry.get<HostLifeEventsComponent>(row).dawn_runs == 1u);
+    CHECK(registry.get<HostLifeEventsComponent>(row).dusk_runs == 1u);
+    CHECK(registry.get<HostLifeEventsComponent>(row).first == 2u);  // the dusk, lower sequence
+    CHECK(registry.get<HostLifeEventsComponent>(row).dawn_dt == doctest::Approx(3600.0f));
+    CHECK(registry.storage<EcsAppReqSchdComponent>().size() == 0u);
+    CHECK(app.schedule_runs(Schedule::GameDawn) == 1u);
+    CHECK(app.schedule_runs(Schedule::GameDusk) == 1u);
+
+    // The requests are consumed: the next tick fires nothing again.
+    app.tick(0.125f);
+    CHECK(registry.get<HostLifeEventsComponent>(row).dawn_runs == 1u);
+    CHECK(app.schedule_runs(Schedule::GameDawn) == 1u);
+
+    // A request for a real-time schedule is refused and consumed; no game-time count moves.
+    const auto wrong_request = registry.create();
+    auto& wrong = registry.emplace<EcsAppReqSchdComponent>(wrong_request);
+    wrong.schedule = static_cast<uint32_t>(Schedule::Regulation);
+    wrong.sequence = 1u;
+    wrong.game_dt = 1.0f;
+    app.tick(0.125f);
+    CHECK(registry.storage<EcsAppReqSchdComponent>().size() == 0u);
+    CHECK(app.schedule_runs(Schedule::GameDawn) == 1u);
+    CHECK(app.schedule_runs(Schedule::GameDusk) == 1u);
+
     app.shutdown();
 }
 

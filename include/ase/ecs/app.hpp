@@ -14,9 +14,10 @@
  * @layer       1 (Core)
  * @category    ecs/module
  * @usecase     usecase:100357 - run the tick loop
+ * @actor       Entity Component System (ECS)
  * @created     2025-12-01
- * @modified    2026-10-11
- * @version     1.3.0
+ * @modified    2026-10-25
+ * @version     1.4.0
  *
  * Usage:
  *   ecs::App()
@@ -85,29 +86,28 @@ const char* get_version() {
 
 }  // namespace detail
 
-// Ebenen des Region-Domain-Gates (App::run_schedule). GENAU ZWEI, Betreiber-Festlegung
-// 2026-08-26: Vorgabe jedes Moduls und Plugins ist SIMULATION - ohne RegionRect-Coverage
-// wird sie gehalten, denn ein Knoten ohne aktive Chunks simuliert NICHTS (VIS_ASE.md:
-// Chunk-Modell und Sphaeren-Frequenzen; auch Wetter und Celestial sind Simulation und
-// laufen nur mit Coverage, in ihren langsamen Schedules). Einzige Ausnahme ist die
-// Infrastruktur, die keine Simulation ist. Die Erklaerung kommt DATENGETRIEBEN aus dem
-// Modul-Manifest (module.toml `plane`, vom Kernel vor dem Laden deklariert), nie aus Code.
-// Das Gate arbeitet ausschliesslich auf der RAUM-Achse (Coverage) - nie auf Projekt- oder
-// Tenant-Achsen: das Silo-Modell ist verboten (ARCH_ASE_TOPOLOGY.md), der Graph ist EINER,
-// und Wanderer wechseln per Region-Handoff (ReplicaHoffFlipSystem-Kette) den Simulierer,
-// nie den Zustand.
-constexpr uint8_t APP_PLANE_SIM  = 0;  // regionsgebundene Simulation (Vorgabe jedes Moduls)
-constexpr uint8_t APP_PLANE_KERN = 1;  // Infrastruktur: tickt immer (Netz, Persist, Kernel)
+// Planes of the region domain gate (App::run_schedule). EXACTLY TWO, operator decision of
+// 2026-08-26: the default of every module and plugin is SIMULATION - without RegionRect coverage
+// it is held, because a node without active chunks simulates NOTHING (VIS_ASE.md: chunk model and
+// sphere frequencies; weather and celestial are simulation too and run only with coverage, in
+// their slow schedules). The one exception is the infrastructure, which is no simulation. The
+// declaration comes DATA-DRIVEN from the module manifest (module.toml `plane`, declared by the
+// kernel before loading), never from code. The gate works on the SPACE axis (coverage) only -
+// never on project or tenant axes: the silo model is forbidden (ARCH_ASE_TOPOLOGY.md), the graph
+// is ONE, and wanderers change their simulator by region handoff (the ReplicaHoffFlipSystem
+// chain), never their state.
+constexpr uint8_t APP_PLANE_SIM  = 0;  // region-bound simulation (default of every module)
+constexpr uint8_t APP_PLANE_KERN = 1;  // infrastructure: always ticks (network, persistence, kernel)
 
-// Wem der PROZESS gehoert, in dem diese App laeuft. GENAU ZWEI Faelle, beide mit einem Ort im
-// Baum: die fuenf Tier-Server, deren main() die App IST - sie blockiert SIGINT/SIGTERM/SIGHUP/
-// SIGPIPE prozessweit, dreht in run() ihre eigene Schleife und beendet den Prozess mit _exit(0);
-// und ein eingebetteter Host, dem Prozess, Schleife, Signale und Terminal gehoeren (Godot im
-// Vivarium-Client, PLAN_ASE_VIVARIUM_PHASE_00_CONTRACT Abschnitt 00.1). Dort ist die App Gast:
-// startup/tick/shutdown auf Zuruf, keine Signalwache, keine Aenderung der Signalmaske, keine
-// Fortschrittstabelle, kein run(). Die Simulation selbst ist in beiden Faellen dieselbe.
-constexpr uint8_t APP_LIFE_PROCESS = 0;  // die App besitzt den Prozess (Tier-Server, Vorgabe)
-constexpr uint8_t APP_LIFE_HOST    = 1;  // ein Host besitzt den Prozess (eingebettete App)
+// Who owns the PROCESS this App runs in. EXACTLY TWO cases, both with a place in the tree: the
+// five tier servers, whose main() IS the App - it blocks SIGINT/SIGTERM/SIGHUP/SIGPIPE for the
+// whole process, spins its own loop in run() and ends the process with _exit(0); and an embedding
+// host that owns process, loop, signals and terminal (Godot in the Vivarium client,
+// PLAN_ASE_VIVARIUM_PHASE_00_CONTRACT section 00.1). There the App is a guest: startup/tick/
+// shutdown on call, no signal watch, no change of the signal mask, no progress table, no run().
+// The simulation itself is the same in both cases.
+constexpr uint8_t APP_LIFE_PROCESS = 0;  // the App owns the process (tier server, default)
+constexpr uint8_t APP_LIFE_HOST    = 1;  // a host owns the process (embedded App)
 
 // Forward declarations
 class App;
@@ -238,7 +238,7 @@ public:
         std::string prev_ver = std::move(current_version_);
         current_source_ = K::name();
         current_version_ = detail::get_version<K>();
-        // Kernel-Systeme sind Infrastruktur: nie vom Region-Domain-Gate gehalten.
+        // Kernel systems are infrastructure: never held by the region domain gate.
         declare_module_plane(K::name(), APP_PLANE_KERN);
         kernel.build(*this);
         current_source_ = std::move(prev_src);
@@ -251,14 +251,14 @@ public:
      * Used to pass tier identity into the kernel at setup time,
      * e.g. app.add_kernel<Kernel>(Tier::Replica).
      *
-     * EIN FESTER PARAMETER STATT EINES PAKETS, und die Stelligkeit ist gemessen, nicht geraten:
-     * baumweit gibt es genau FUENF Aufrufstellen dieser Ueberladung — die fuenf main.cpp der
-     * Tiers —, und jede uebergibt genau ein Argument (ase::kernel::Tier::X). Das Paket hat nie
-     * etwas anderes getragen, also kostet der feste Parameter keine einzige Aufrufstelle.
+     * ONE FIXED PARAMETER INSTEAD OF A PACK, and the arity is measured, not guessed: across the
+     * tree there are exactly FIVE call sites of this overload - the five main.cpp of the tiers -,
+     * and each passes exactly one argument (ase::kernel::Tier::X). The pack never carried anything
+     * else, so the fixed parameter costs no call site.
      *
-     * Braucht ein Kernel eines Tages zwei Argumente, ist die Antwort NICHT das Paket zurueck,
-     * sondern ein Typ, der beide traegt - dann steht am Aufruf, was uebergeben wird, statt einer
-     * Stellenliste, die man beim Lesen zaehlen muss.
+     * Should a kernel one day need two arguments, the answer is NOT the pack again but a type
+     * that carries both - then the call names what is passed, instead of a positional list one
+     * has to count while reading.
      */
     template<Kernel K, typename Arg>
     App& add_kernel(Arg&& arg) {
@@ -267,7 +267,7 @@ public:
         std::string prev_ver = std::move(current_version_);
         current_source_ = K::name();
         current_version_ = detail::get_version<K>();
-        // Kernel-Systeme sind Infrastruktur: nie vom Region-Domain-Gate gehalten.
+        // Kernel systems are infrastructure: never held by the region domain gate.
         declare_module_plane(K::name(), APP_PLANE_KERN);
         kernel.build(*this);
         current_source_ = std::move(prev_src);
@@ -386,7 +386,8 @@ public:
     void startup();
 
     /**
-     * Run one frame of the main loop schedules.
+     * Run one frame of the main loop schedules: the real-time tiers, then the game-time events
+     * requested through EcsAppReqSchdComponent, then Conclusion (ARCH_ASE_SCHEDULE section 6.3).
      * Call this in your manual tick loop.
      */
     void tick(float dt);
@@ -423,12 +424,13 @@ public:
      * How often the tick scheduler ran one schedule since this App was built.
      *
      * Counted by the scheduler where the schedule's tier runs, never derived from simulated
-     * time - a tier that missed its interval or caught up shows in the count. An embedding host
-     * reads it for its measurement line (the Vivarium client: Regulation steps).
+     * time - a tier that missed its interval or caught up shows in the count. A game-time
+     * schedule counts each event the drain fired for it. An embedding host reads it for its
+     * measurement line (the Vivarium client: Regulation steps).
      *
      * @param schedule the schedule to look up
-     * @return the number of runs; 0 before the first tick and for a schedule the scheduler does
-     *         not drive (lifecycle schedules, game-time schedules)
+     * @return the number of runs; 0 before the first tick, for a schedule the scheduler does
+     *         not drive (lifecycle schedules) and for a game-time schedule no event has fired yet
      */
     [[nodiscard]] uint64_t schedule_runs(Schedule schedule) const;
 
@@ -487,11 +489,20 @@ private:
      */
     static void schedule_trampoline(void* user, Schedule schedule, float sched_dt);
 
+    /** Same shape for the game-time drain of one tick: recovers the App and runs its events. */
+    static void event_trampoline(void* user);
+
     /** Same shape for the shutdown sequence: recovers the App and hands it to on_stopped_callback_. */
     static void stopped_trampoline(void* user);
 
     /** Runs one schedule; brackets Dynamics with the wall-clock measurement for kernel stats. */
     void run_schedule_measured(Schedule schedule, float sched_dt);
+
+    /**
+     * Fires the game-time events requested in this tick, in sequence order, each with its game
+     * seconds as dt, and destroys every request it took (ARCH_ASE_SCHEDULE section 6.3).
+     */
+    void run_game_events();
 
     World world_;
 
@@ -500,14 +511,14 @@ private:
     std::unique_ptr<internal::SystemRegistry> system_registry_;
 
     std::atomic<bool> running_{false};
-    int64_t last_frame_time_ = 0;  // monotone Nanosekunden, gesetzt in startup()
+    int64_t last_frame_time_ = 0;  // monotonic nanoseconds, set in startup()
     // M-B module axis: O(1) index (mod_hash<<32 | sched_id) → row entity of the
     // EcsAppStaModTimComponent upsert in run_schedule. IntMixHash is mandatory
     // for integer keys (ARCH_ASE_HUB_ASYNC 9.7).
     ase::containers::HashMap<uint64_t, Entity, ase::containers::IntMixHash> mod_tim_rows_;
-    // Flip-Gedaechtnis des Region-Domain-Gates: -1 unbekannt, 0 laufend, 1 gehalten. Das
-    // Gate selbst ist je Durchlauf zustandslos (Anker-Tag + RegionRect-Poolgroesse); dies
-    // verhindert nur, dass der Uebergang in jedem Durchlauf erneut geloggt wird.
+    // Flip memory of the region domain gate: -1 unknown, 0 running, 1 held. The gate itself is
+    // stateless per pass (anchor tag + RegionRect pool size); this only keeps the transition from
+    // being logged again in every pass.
     int region_hold_state_ = -1;
     std::string current_source_;
     std::string current_version_;
@@ -517,7 +528,7 @@ private:
     void(*on_stopped_callback_)(App& app) = nullptr;
     int cli_argc_ = 0;
     char** cli_argv_ = nullptr;
-    // Fest ab dem Konstruktor: wer den Prozess besitzt, entscheidet sich nicht im Lauf.
+    // Fixed from the constructor on: who owns the process is not decided while running.
     uint8_t lifecycle_ = APP_LIFE_PROCESS;
 };
 

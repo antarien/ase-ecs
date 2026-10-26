@@ -12,9 +12,10 @@
  * @layer       1 (Core)
  * @category    process/computation/algorithm
  * @usecase     usecase:100357 - run the tick loop
+ * @actor       Entity Component System (ECS)
  * @created     2026-02-01
- * @modified    2026-10-19
- * @version     1.1.1
+ * @modified    2026-10-25
+ * @version     1.2.0
  *
  * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
  *
@@ -163,10 +164,21 @@ TickScheduler::TickScheduler() {
 void TickScheduler::reset() {
     accumulators_.fill(0.0f);
     tier_runs_.fill(0u);
+    event_runs_.fill(0u);
     tick_count_ = 0u;
 }
 
-void TickScheduler::tick(float dt, ScheduleRunner run, void* user) {
+void TickScheduler::note_event_run(Schedule schedule) noexcept {
+    if (!is_gametime_schedule(schedule)) {
+        return;
+    }
+    const size_t slot = static_cast<size_t>(schedule) - static_cast<size_t>(Schedule::GameDawn);
+    if (slot < GAMETIME_SLOT_COUNT) {
+        ++event_runs_[slot];
+    }
+}
+
+void TickScheduler::tick(float dt, ScheduleRunner run, EventDrain drain, void* user) {
     // Clamp frame time
     if (dt > max_frame_time_) {
         dt = max_frame_time_;
@@ -206,6 +218,10 @@ void TickScheduler::tick(float dt, ScheduleRunner run, void* user) {
         }
     }
 
+    // The game-time events of this tick, once, after the real-time tiers: whatever they write,
+    // the Conclusion below already sees (ARCH_ASE_SCHEDULE section 6.3).
+    drain(user);
+
     // Conclusion always runs at end of frame
     run(user, Schedule::Conclusion, dt);
     ++tick_count_;
@@ -215,6 +231,11 @@ uint64_t TickScheduler::runs(Schedule schedule) const noexcept {
     // Conclusion stands in no tier table: tick() runs it once after the tiers, every tick.
     if (schedule == Schedule::Conclusion) {
         return tick_count_;
+    }
+    // A game-time schedule stands in no tier either: its drain reported every run.
+    if (is_gametime_schedule(schedule)) {
+        const size_t slot = static_cast<size_t>(schedule) - static_cast<size_t>(Schedule::GameDawn);
+        return (slot < GAMETIME_SLOT_COUNT) ? event_runs_[slot] : 0u;
     }
     const TierConfig* configs = get_tier_configs();
     for (size_t tier = 0; tier < TIER_COUNT; ++tier) {

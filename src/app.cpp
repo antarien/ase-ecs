@@ -12,9 +12,11 @@
  * @layer       1 (Core)
  * @design      DSGN_016
  * @category    ecs/module
+ * @usecase     usecase:100357 - run the tick loop
+ * @actor       Entity Component System (ECS)
  * @created     2025-12-01
- * @modified    2026-10-07
- * @version     1.3.0
+ * @modified    2026-10-25
+ * @version     1.4.0
  *
  * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
  *
@@ -33,15 +35,16 @@
  */
 
 #include <ase/ecs/app.hpp>
+#include <ase/ecs/components/app/request/ecs_app_req_schd_comp.hpp>
 #include <ase/ecs/components/app/state/ecs_app_sta_mod_tim_comp.hpp>
 #include <ase/ecs/components/app/state/ecs_app_sta_shtd_comp.hpp>
 #include <ase/ecs/components/app/state/ecs_app_sta_tim_comp.hpp>
 #include <ase/ecs/components/app/tag/ecs_app_quit_req_tag.hpp>
 #include <ase/ecs/components/app/tag/ecs_app_rgn_gate_tag.hpp>
-// Region-Domain-Gate: die RegionRect-Nahtzeile (L0) ist das Coverage-Signal
+// Region domain gate: the RegionRect seam row (L0) is the coverage signal
 #include <ase/types/region_wire.hpp>
 #include <ase/log/log.hpp>
-#include <ase/log/log_lifecycle.hpp>  // log::shutdown beim Herunterfahren der App
+#include <ase/log/log_lifecycle.hpp>  // log::shutdown when the App goes down
 #include <ase/ecs/internal/boot_logger.hpp>
 #include <ase/ecs/internal/dependency_sorter.hpp>
 #include <ase/ecs/internal/shutdown_sequence.hpp>
@@ -52,9 +55,9 @@
 
 #include <csignal>
 
-// Signalzustellung ueber einen Deskriptor statt ueber einen Handler (siehe den Block im anonymen
-// Namensraum). <csignal> bleibt fuer sigset_t und die SIG*-Namen; die drei folgenden Header sind
-// POSIX und tragen signalfd/read/close/pthread_sigmask.
+// Signal delivery through a descriptor instead of a handler (see the block in the anonymous
+// namespace). <csignal> stays for sigset_t and the SIG* names; the three headers below are POSIX
+// and carry signalfd/read/close/pthread_sigmask.
 #include <pthread.h>
 #include <sys/signalfd.h>
 #include <unistd.h>
@@ -64,81 +67,61 @@ namespace ase::ecs {
 namespace {
 
 /**
- * GRACEFUL SHUTDOWN OHNE SIGNALHANDLER — umgebaut am 2026-08-22.
+ * GRACEFUL SHUTDOWN WITHOUT A SIGNAL HANDLER
  *
- * SIGINT/SIGTERM setzen das Laufflag der App auf false, damit App::run() austritt und
- * App::shutdown() das on_stop jedes Systems faehrt. Zentral in App::startup() eingerichtet,
- * damit ALLE Tier-Server (world/reasoning/replica/engine/dist) den Abbau bekommen — das stellt
- * den per-main-Weg wieder her, der im Refactor „streamline main entry point" (world commit
- * 104af81) verlorenging. Seit der Schleifen-Vereinheitlichung rufen alle fuenf mains run();
- * eigene while-Schleifen je Server gibt es nicht mehr.
+ * SIGINT/SIGTERM set the run flag of the App to false, so App::run() leaves its loop and
+ * App::shutdown() runs the on_stop of every system. It is set up centrally in App::startup(), so
+ * that ALL tier servers (world/reasoning/replica/engine/dist) get the teardown; all five mains
+ * call run(), none runs a loop of its own.
  *
- * HIER STAND EIN SIGNALHANDLER, und die Regel SIGNAL_HANDLERS_FORBIDDEN verbietet ihn mit der
- * Begruendung „Use ECS event pattern". Das war keine Formalie: ein Handler laeuft im
- * Signalkontext und darf dort fast nichts — kein malloc, keine Sperre, kein Registry-Zugriff.
- * Genau deshalb konnte er nur einen atomaren Store tun und brauchte einen globalen App*-Zeiger,
- * um ueberhaupt an die Instanz zu kommen.
+ * NO HANDLER, because the rule SIGNAL_HANDLERS_FORBIDDEN forbids it with the reason "Use ECS event
+ * pattern", and that is no formality: a handler runs in signal context and may do almost nothing
+ * there - no malloc, no lock, no registry access. It could only do an atomic store and would need
+ * a global App* pointer to reach the instance at all. The rule carries `file_filter: null` and
+ * holds in EVERY file of the tree, the five main.cpp included, so moving the handler elsewhere
+ * would solve nothing.
  *
- * DIE AUFLOESUNG IST NICHT „woanders hin": die Regel traegt `file_filter: null` und gilt in
- * JEDER Datei des Baums, auch in den fuenf main.cpp. Ein Umzug nach L5 haette aus einer
- * Fundstelle fuenf gemacht und nichts geloest. Ein ersatzloser Wegfall haette fuenf Servern den
- * geordneten Shutdown genommen.
+ * THE SIGNALS ARE BLOCKED for the process and delivered through a signalfd. With that there is no
+ * asynchronous callback, no signal context, no async-signal-safety restriction and no global App*
+ * pointer. The signal is an EVENT the tick picks up - literally what the rule message asks for.
  *
- * STATTDESSEN VERSCHWINDET DIE SACHE SELBST: die Signale werden fuer den Prozess BLOCKIERT und
- * ueber einen signalfd zugestellt. Damit gibt es keinen asynchronen Rueckruf mehr, keinen
- * Signalkontext, keine async-signal-safety-Beschraenkung und keinen globalen App*-Zeiger. Das
- * Signal ist ein EREIGNIS, das der Tick abholt — woertlich das, was die Regelmeldung verlangt.
+ * THE PRICE, named honestly: the flag falls at the next tick, not at once (at most 16.7 ms at
+ * 60 Hz). Irrelevant when shutting down. With a HANGING system a handler would be equally
+ * helpless: it would set the flag at once, but the loop would never come back to the query.
  *
- * DER PREIS, ehrlich benannt: das Flag faellt nicht mehr sofort, sondern beim naechsten Tick
- * (≤ 16,7 ms bei 60 Hz). Beim Herunterfahren belanglos. Und bei einem HAENGENDEN System waren
- * beide Formen ohnehin gleich hilflos — der alte Handler setzte das Flag sofort, aber die
- * Schleife waere nie zur Abfrage zurueckgekehrt.
- *
- * DER DESKRIPTOR LIEGT IN EINEM COMPONENT, nicht in einer Dateivariablen. Hier stand zuerst ein
- * `int g_shutdown_fd` — und die zweite Regel, GLOBAL_VARIABLE_FORBIDDEN, haette ihn getroffen
- * („Use Components or registry.ctx()"). Der alte `std::atomic<App*> g_signal_app` entging ihrem
- * Muster nur, weil `std::atomic<...>` kein `\w+\s+g_\w+` ist; die Sache war dieselbe.
- *
- * BEIDE REGELN ZEIGEN AUF DIESELBE BAUFORM, und das ist kein Zufall: ohne Signalkontext darf
- * der Zustand dort liegen, wo ECS-Zustand liegt. Siehe EcsAppStaShtdComponent — die ANWESENHEIT
- * des Components heisst „Wache scharf", weshalb der Deskriptor keinen Ungueltigkeitswert
- * braucht.
+ * THE DESCRIPTOR LIVES IN A COMPONENT, not in a file variable: the rule GLOBAL_VARIABLE_FORBIDDEN
+ * ("Use Components or registry.ctx()") points to the same form as the first one. Without signal
+ * context the state may live where ECS state lives. See EcsAppStaShtdComponent - the PRESENCE of
+ * the component means "watch armed", which is why the descriptor needs no invalid value.
  */
 
 /**
- * Richtet die Zustellung ein und liefert den Deskriptor, oder einen negativen Wert.
+ * Sets up the delivery and returns the descriptor, or a negative value.
  *
- * pthread_sigmask BLOCKIERT die Signale prozessweit — ohne das wuerde SIGINT weiterhin das
- * Vorgabeverhalten ausloesen (sofortiger Tod) und der signalfd niemals etwas sehen. SIGHUP ist
- * mit in der Maske: ein Terminal-Hangup darf einen kopflosen Tier-Server nicht toeten, und eine
- * blockierte Zustellung tut genau das, was SIG_IGN vorher tat.
+ * pthread_sigmask BLOCKS the signals for the whole process - without it SIGINT would keep its
+ * default action (immediate death) and the signalfd would never see anything. SIGHUP is in the
+ * mask: a terminal hangup must not kill a headless tier server, and a blocked delivery does
+ * exactly what SIG_IGN would do.
  *
- * SIGPIPE STEHT AUS DEMSELBEN GRUND DABEI, ergaenzt am 2026-08-28. Der Tier laeuft in einer
- * Pipeline, deren Leser der ase-logview ist (core/ase-console — er legt die Pipe an, startet
- * den Tier als sein Kind und liest dessen stdout), und die Bootphase
- * schreibt ihre Fortschrittstabelle auf stdout. Verlaesst der Betrachter das Fenster, waehrend
- * der Server noch schreibt, toetet ihn der naechste Schreibvorgang sofort und lautlos — kein
- * Coredump, kein Journal, keine Shutdown-Zeile (logview_main.cpp:951 beschreibt genau diesen
- * Tod). Blockiert kann er nicht toeten; der Schreibvorgang scheitert dann mit EPIPE, was der
- * richtige Weg ist.
+ * SIGPIPE STANDS THERE FOR THE SAME REASON. The tier runs in a pipeline whose reader is the
+ * ase-logview (core/ase-console - it creates the pipe, starts the tier as its child and reads its
+ * stdout), and the boot phase writes its progress table to stdout. When the viewer leaves the
+ * window while the server still writes, the next write would kill it at once and silently - no
+ * core dump, no journal, no shutdown line (logview_main.cpp:951 describes exactly this death).
+ * Blocked it cannot kill; the write fails with EPIPE, which is the right way.
  *
- * WARUM DAS EINE AUSNAHME BESEITIGT UND KEINE SCHAFFT: gemessen am 2026-08-28 trugen dist und
- * engine SIGPIPE als ignoriert (SigIgn Bit 13), replica und der Edge-Daemon NICHT — und im
- * ganzen Baum setzt es keine einzige Zeile. Der Unterschied kam also aus einer Bibliothek, die
- * der eine Tier laedt und der andere nicht: eine Eigenschaft per Zufall der Ladeliste. Hier
- * gesetzt, gilt sie fuer alle fuenf Tiers gleich und an einer Stelle.
+ * ONE PLACE FOR ALL FIVE TIERS: without this line, whether SIGPIPE kills a tier would depend on
+ * whether one of the libraries it happens to load ignores it - a property by accident of the load
+ * list. Set here, it holds for all five tiers alike.
  *
- * DIESE ZEILE WIRD NICHT ENTFERNT. Am 2026-08-28 habe ich sie einmal wieder herausgenommen,
- * weil ich SIGPIPE fuer den Beendigungsweg der Konsole hielt — das war falsch und der
- * Betreiber hat es als Sabotage zurueckgewiesen. Der Verlust der Doppel-Strg+C-Sicherung kam
- * NICHT von hier. Wer den Ausfall dieser Sicherung sucht, sucht in der KONSOLE
- * (core/ase-console): sie haelt den ersten Druck, sie schickt beim zweiten das SIGTERM, und sie
- * haelt den Tier in einer eigenen Prozessgruppe, damit ihn kein Tastendruck direkt trifft.
- * In dieser Maske steht darueber nichts.
+ * THIS LINE STAYS. SIGPIPE is not the console's way of ending the tier. The double Ctrl+C
+ * safeguard lives in the CONSOLE (core/ase-console): it holds the first press, it sends SIGTERM
+ * on the second, and it keeps the tier in a process group of its own so that no key press hits it
+ * directly. Nothing about that stands in this mask.
  */
 int open_shutdown_watch() {
-    // Der Aufrufwert -1 heisst „neuen Deskriptor anlegen"; derselbe Wert kommt im Fehlerfall
-    // zurueck. Beides ist POSIX und steht hier lokal, nicht auf Dateiebene.
+    // The argument -1 means "create a new descriptor"; the same value comes back on failure.
+    // Both are POSIX and stand here locally, not at file level.
     constexpr int NewDescriptor = -1;
 
     sigset_t mask;
@@ -155,33 +138,28 @@ int open_shutdown_watch() {
 }
 
 /**
- * Holt ein anstehendes Abbruchsignal ab. true heisst „der Betreiber will beenden".
+ * Picks up a pending stop signal. true means "the operator wants to end".
  *
- * Nichtblockierend: liegt nichts an, liefert ::read -1 mit EAGAIN und der Tick laeuft weiter.
- * SIGHUP, SIGPIPE und SIGINT werden gelesen und VERWORFEN — sie sind blockiert, damit sie nicht
- * toeten, nicht damit sie beenden. Ohne dieses Auslesen blieben sie im Deskriptor stehen.
+ * Non-blocking: when nothing is pending, ::read returns -1 with EAGAIN and the tick goes on.
+ * SIGHUP and SIGPIPE are read and DISCARDED - they are blocked so that they do not kill, not so
+ * that they end. Without this read they would stay in the descriptor.
  *
- * SIGINT ZAEHLT WIEDER ALS BEENDIGUNGSWUNSCH — UND DAS IST DIE RUECKNAHME EINER FALSCHEN
- * ADRESSE. Zwischen dem 2026-08-28 und dem 2026-09-06 stand SIGINT in dieser Verwerfungsliste,
- * mit einer Begruendung, die aus einem BETRACHTER stammte: der ase-logview faengt den ersten
- * Strg+C ab, zeigt den roten Footer, und erst der zweite sollte beenden. Die Doppelbestaetigung
- * ist richtig — ihr Ort war es nicht. Ein Tier laeuft auf einer eigenen VM, unter systemd, ohne
- * Tastatur und ohne Konsole; ihm eine Terminal-Geste einzubauen, macht ihn genau dort
- * unbeendbar, wo niemand sie ausloesen kann: eine SSH- oder Mosh-Sitzung, in der ein Betreiber
- * das Binaer im Vordergrund startet, reagierte auf Strg+C ueberhaupt nicht mehr.
+ * SIGINT COUNTS AS A WISH TO END. The double confirmation of the viewer is right, but its place is
+ * the viewer: a tier runs on a VM of its own, under systemd, without keyboard and without console,
+ * and a terminal gesture built into it would make it unendable exactly where nobody can trigger
+ * the gesture - an SSH or Mosh session in which an operator starts the binary in the foreground
+ * would not react to Ctrl+C at all.
  *
- * WO DIE GESTE JETZT LIEGT: in der Konsole, die sie anzeigt. Der ase-logview startet den Tier
- * als eigenes Kind in einer EIGENEN PROZESSGRUPPE (core/ase-console, spawn_in_group) — das
- * Terminal stellt Strg+C nur der Vordergrundgruppe zu, der Tier bekommt also gar keines, und
- * beim zweiten Druck schickt die Konsole ihm SIGTERM. Die Sicherung haengt damit an einer
- * Prozessgruppe statt an einer Sonderregel in einem kopflosen Dienst, und sie wird mit dem
- * Konsolenbinaer ausgeliefert statt in einem Skript zu stehen, das nie eine VM erreicht.
+ * WHERE THE GESTURE LIVES: in the console that shows it. The ase-logview starts the tier as its
+ * own child in a PROCESS GROUP OF ITS OWN (core/ase-console, spawn_in_group) - the terminal
+ * delivers Ctrl+C only to the foreground group, so the tier gets none, and on the second press the
+ * console sends it SIGTERM. The safeguard hangs on a process group instead of a special rule in a
+ * headless service, and it ships with the console binary.
  *
- * VERWORFEN BLEIBEN SIGHUP UND SIGPIPE, und die beiden aus verschiedenen Gruenden: ein
- * Terminal-Hangup darf einen kopflosen Tier nicht toeten, und ein geschlossener Betrachter ist
- * kein Abbruchwunsch — sein Schreibfehler heisst EPIPE und wird dort behandelt, wo geschrieben
- * wird. Aus der MASKE herauszunehmen hiesse toeten lassen; aus dieser LISTE herauszunehmen
- * hiesse beenden auf ein Signal, das kein Beenden meint.
+ * SIGHUP AND SIGPIPE STAY DISCARDED, for two different reasons: a terminal hangup must not kill a
+ * headless tier, and a closed viewer is no wish to stop - its write error is called EPIPE and is
+ * handled where the write happens. Taking them out of the MASK would mean letting them kill;
+ * taking them out of this LIST would mean ending on a signal that does not mean ending.
  */
 bool shutdown_requested(int fd) {
     bool requested = false;
@@ -197,37 +175,26 @@ bool shutdown_requested(int fd) {
 }
 
 /**
- * Gibt die Zustellung zurueck. Nach dem Aufheben der Maske gilt wieder das Vorgabeverhalten —
- * ein zweites Strg+C waehrend des Abbaus beendet hart, statt in eine halb abgebaute App zu
- * laufen. Das ist dieselbe Absicht, die vorher das Zuruecksetzen auf SIG_DFL hatte.
+ * Gives the delivery back. After the mask is lifted the default action holds again - a second
+ * Ctrl+C during teardown ends hard instead of running into a half torn-down App.
  *
- * DIESER SATZ GALT NEUN TAGE LANG NICHT — vom 2026-08-28 bis zum 2026-09-06 — und weggefallen
- * ist die Bedingung, nicht der Satz. Das Aufheben einer Maske stellt die VORGABE
- * nur her, wenn die Disposition die Vorgabe IST; damals startete ein Shell-Skript den Server
- * als Hintergrundjob, und POSIX schreibt dafuer in einer Shell ohne Job-Control SIG_IGN fuer
- * SIGINT/SIGQUIT vor — eine Disposition, die exec ueberlebt (gemessen: SigIgn=0x1006 gegen
- * 0x1000 im Vordergrund). Der Notausgang fiel damit nicht auf „hart beenden", sondern auf
- * „wirkungslos".
+ * LIFTING A MASK RESTORES THE DEFAULT ONLY WHERE THE DISPOSITION IS THE DEFAULT. A process started
+ * as a background job of a shell without job control inherits SIG_IGN for SIGINT/SIGQUIT across
+ * exec (POSIX), and then this emergency exit has no effect. The console starts the tier itself, by
+ * fork/exec without an intermediate shell (core/ase-console, spawn_in_group), so no ignoring is
+ * inherited and the sentence above holds. It is not the safeguard either: that a single key press
+ * does not end the tier is decided by the console's process group, not by its signal mask.
  *
- * HEUTE STARTET DIE KONSOLE DEN TIER SELBST, per fork/exec ohne Zwischenshell
- * (core/ase-console, spawn_in_group). Damit erbt er keine Ignorierung mehr: ein Handler wird
- * ueber exec ohnehin auf Vorgabe zurueckgesetzt, und SIG_IGN setzt niemand. Der Satz oben gilt
- * also wieder — und er ist ueberdies nicht mehr die Sicherung: dass ein einzelner Tastendruck
- * den Tier nicht beendet, entscheidet die Prozessgruppe der Konsole, nicht seine Signalmaske.
- *
- * ZWISCHEN Armierung und Abbau war auch damals nichts kaputt: ein blockiertes Signal wird
- * pending, nie verworfen — SIG_IGN gewinnt dort NICHT (gegengeprueft mit einem
- * signalfd-Testprogramm). Es waren ausschliesslich die beiden Raender, und der eine davon (das
- * Bootfenster) ist seither durch das fruehe Blockieren geschlossen.
+ * BETWEEN arming and teardown a blocked signal becomes pending and is never discarded - SIG_IGN
+ * does NOT win there (cross-checked with a signalfd test program).
  */
 void close_shutdown_watch(int fd) {
-    // SIGPIPE FEHLT HIER ABSICHTLICH UND BLEIBT BLOCKIERT. Die drei anderen werden freigegeben,
-    // damit ein zweites Strg+C den Abbau hart abkuerzen kann — SIGPIPE meint kein Beenden,
-    // sondern trifft den Server genau dann, wenn der Betrachter das Fenster waehrend des
-    // Herunterfahrens verlaesst. Freigegeben wuerde er den Tier toeten, BEVOR seine
-    // Shutdown-Zeilen in der Logdatei stehen; das ist der Tod ohne Spur aus
-    // logview_main.cpp:990. Der Prozess endet unmittelbar danach, eine gesetzte Blockade kostet
-    // also nichts.
+    // SIGPIPE IS LEFT OUT HERE ON PURPOSE AND STAYS BLOCKED. The other three are released so a
+    // second Ctrl+C can cut the teardown short - SIGPIPE means no ending, it hits the server
+    // exactly when the viewer leaves the window during shutdown. Released, it would kill the
+    // tier BEFORE its shutdown lines are in the log file; that is the death without a trace from
+    // logview_main.cpp:990. The process ends right after this, so a block left in place costs
+    // nothing.
     sigset_t mask;
     sigemptyset(&mask);
     sigaddset(&mask, SIGINT);
@@ -239,9 +206,7 @@ void close_shutdown_watch(int fd) {
 
 }  // anonymous namespace
 
-// =============================================================================
 // APP IMPLEMENTATION (Orchestrator)
-// =============================================================================
 
 App::App()
     : App(APP_LIFE_PROCESS) {
@@ -272,37 +237,26 @@ App& App::declare_module_plane(std::string_view module, uint8_t plane) {
 
 void App::startup() {
     /**
-     * BLOCKIEREN ZUERST, VERARBEITEN SPAETER — und die Trennung dieser beiden Schritte ist der
-     * ganze Punkt. Der Deskriptor entsteht HIER, vor dem Boot; gelesen wird er erst, wenn unten
-     * das Component steht. Ein blockiertes Signal geht nicht verloren, es bleibt pending: ein
-     * Strg+C waehrend des Boots erreicht die halb gebaute App nicht (die Absicht des frueheren
-     * "armed LAST"), wird aber beim ersten Tick nach dem Boot abgeholt und faehrt den Tier
-     * sauber herunter.
+     * BLOCK FIRST, PROCESS LATER - and the separation of these two steps is the whole point. The
+     * descriptor comes into being HERE, before the boot; it is read only once the component
+     * stands below. A blocked signal is not lost, it stays pending: a Ctrl+C during the boot does
+     * not reach the half-built App, but it is picked up at the first tick after the boot and takes
+     * the tier down cleanly.
      *
-     * WARUM DIE SPAETE ARMIERUNG EIN UNBEENDBARER SERVER WAR — gemessen am 2026-08-28 am echten
-     * dist-Binary durch den echten Startpfad: 30 Sekunden lang stand SigBlk auf 0x10000 (nur
-     * SIGCHLD), die Wache war nie armiert, SigIgn trug 0x6. In diesem Fenster war SIGINT nicht
-     * etwa Vorgabe, sondern IGNORIERT — der damalige Startpfad startete den Server als
-     * Hintergrundjob einer Shell ohne Job-Control, und POSIX setzt dafuer SIG_IGN. Ein SIGINT an
-     * die Prozessgruppe liess den Server unbeeindruckt weiterlaufen.
+     * WHY THE BLOCK COMES BEFORE THE BOOT: a signal that arrives before the watch reads would
+     * otherwise be lost, whatever disposition stood before. And the window is not short: it spans
+     * the WHOLE boot with all its retries. A tier whose connection hangs in retry must still end
+     * on Ctrl+C.
      *
-     * Diese Erbschaft gibt es seit dem 2026-09-06 nicht mehr (die Konsole forkt den Tier selbst),
-     * aber der Grund fuer das fruehe Blockieren bleibt unveraendert: ein Signal, das ankommt,
-     * bevor die Wache liest, waere sonst verloren — gleich, welche Disposition davor stand.
-     *
-     * Und das Fenster ist nicht kurz: es umfasst den GESAMTEN Boot samt aller Wiederholungen.
-     * Haengt eine Verbindung im Retry, ist der Tier ueberhaupt nicht mehr per Strg+C zu
-     * beenden — genau der Befund, mit dem dieser Tag begann.
-     *
-     * NUR WENN DIE APP DEN PROZESS BESITZT. Eine eingebettete App (APP_LIFE_HOST, Godot im
-     * Vivarium-Client) fasst die Signale nicht an: die Maske gilt fuer den GANZEN Prozess, und
-     * dort gehoeren SIGINT, SIGTERM, SIGHUP und SIGPIPE dem Host und seiner Plattform. Blockiert
-     * und ueber einen signalfd abgeholt, kaemen sie beim Host nie mehr an. Ohne Wache entsteht
-     * unten auch kein EcsAppStaShtdComponent, also liest tick() kein Signal und shutdown()
-     * schliesst keinen Deskriptor, den diese App nicht selbst geoeffnet hat.
+     * ONLY WHEN THE APP OWNS THE PROCESS. An embedded App (APP_LIFE_HOST, Godot in the Vivarium
+     * client) does not touch the signals: the mask holds for the WHOLE process, and there SIGINT,
+     * SIGTERM, SIGHUP and SIGPIPE belong to the host and its platform. Blocked and picked up
+     * through a signalfd, they would never reach the host again. Without a watch no
+     * EcsAppStaShtdComponent comes into being below, so tick() reads no signal and shutdown()
+     * closes no descriptor this App did not open itself.
      */
     const bool host_owned = (lifecycle_ == APP_LIFE_HOST);
-    // Im Host-Betrieb wird der Wert nie gelesen - der Rueckweg unten kommt vor jeder Abfrage.
+    // Host-owned the value is never read - the early return below comes before every query.
     const int watch_fd = host_owned ? 0 : open_shutdown_watch();
 
     // Sort systems by dependencies (FIXED: no null pointer bug)
@@ -321,7 +275,7 @@ void App::startup() {
     // Print boot log and call on_start for each system
     internal::BootLoggerConfig boot_config;
     boot_config.boot_delay_us = boot_delay_us_;
-    // Das Terminal gehoert dem Host: on_start laeuft unveraendert, nur die Tabelle entfaellt.
+    // The terminal belongs to the host: on_start runs unchanged, only the table is left out.
     boot_config.render_terminal_table = !host_owned;
     internal::print_boot_sequence(*system_registry_, world_, boot_config);
 
@@ -332,11 +286,9 @@ void App::startup() {
         internal::boot_pending_systems(*system_registry_, world_, boot_config);
     }
 
-    // Run Lifecycle schedules (Initialization → Configuration) once at startup.
-    // Restores the pre-e75a4fd behaviour: systems registered in Initialization
-    // or Configuration need their tick() invoked once so effects like MongoDB
-    // store_pool() actually fire. Commit a1b396d established the ordering —
-    // Initialization before Configuration.
+    // Run Lifecycle schedules (Initialization → Configuration) once at startup: systems
+    // registered in Initialization or Configuration need their tick() invoked once so effects
+    // like MongoDB store_pool() actually fire. Initialization runs before Configuration.
     run_schedule(Schedule::Initialization, 0.0f);
     run_schedule(Schedule::Configuration, 0.0f);
 
@@ -344,25 +296,22 @@ void App::startup() {
     last_frame_time_ = utils::monotonic_nanos();
 
     /**
-     * Die Wache SCHARFSTELLEN, jetzt da der Boot durch ist: Ctrl+C (SIGINT) oder ein kill
-     * (SIGTERM) brechen die Laufschleife, damit shutdown() den on_stop-Abbau faehrt. SIGHUP
-     * wird geschluckt (ein Terminal-Hangup darf einen kopflosen Tier-Server nicht toeten).
+     * ARM the watch, now that the boot is through: Ctrl+C (SIGINT) or a kill (SIGTERM) break the
+     * run loop so shutdown() runs the on_stop teardown. SIGHUP is swallowed (a terminal hangup
+     * must not kill a headless tier server).
      *
-     * BLOCKIERT WURDE OBEN, GELESEN WIRD AB HIER — die beiden Schritte sind absichtlich
-     * getrennt. Das Component ist der Schalter: erst seine Anwesenheit laesst App::tick() den
-     * Deskriptor abfragen. Ein Signal aus der Bootphase liegt bis dahin pending und wird beim
-     * ersten Tick abgeholt; es erreicht also keine halb gebaute App und geht trotzdem nicht
-     * verloren. Frueher entstand der Deskriptor ERST hier, und damit war der ganze Boot ein
-     * Fenster, in dem Strg+C wirkungslos war (SigIgn aus dem Hintergrundstart) — bei einem im
-     * Retry haengenden Boot war der Tier ueberhaupt nicht mehr zu beenden.
+     * BLOCKED ABOVE, READ FROM HERE ON - the two steps are separate on purpose. The component is
+     * the switch: only its presence lets App::tick() query the descriptor. A signal from the boot
+     * phase lies pending until then and is picked up at the first tick; it reaches no half-built
+     * App and is still not lost.
      *
-     * SCHEITERT DAS SCHARFSCHALTEN, ENTSTEHT KEIN COMPONENT — und dann meldet es sich, statt
-     * still ein Nichts zu sein. Ohne Wache laeuft der Server weiter, aber Strg+C beendet ihn
-     * hart: on_stop faellt aus, offene Verbindungen und Puffer werden nicht abgebaut. Das ist
-     * genau die Sorte Fehlschlag, die von „Erfolg ohne Arbeit" nicht zu unterscheiden waere.
+     * WHEN ARMING FAILS, NO COMPONENT COMES INTO BEING - and then it reports itself instead of
+     * silently being nothing. Without a watch the server keeps running, but Ctrl+C ends it hard:
+     * on_stop is skipped, open connections and buffers are not torn down. That is exactly the
+     * kind of failure that would be indistinguishable from "success without work".
      *
-     * Eine eingebettete App hat oben keine Wache geoeffnet und stellt hier keine scharf; ein
-     * Stopp kommt bei ihr als Aufruf von shutdown() durch den Host, nie als Signal.
+     * An embedded App opened no watch above and arms none here; a stop reaches it as a call of
+     * shutdown() by the host, never as a signal.
      */
     if (host_owned) {
         return;
@@ -382,11 +331,10 @@ void App::startup() {
 void App::shutdown() {
     /**
      * Disarm the shutdown watch before teardown so a second Ctrl+C during shutdown reverts to
-     * the default disposition (hard exit) instead of stalling on a tearing-down App. Das
-     * Aufheben der Maske stellt genau das her, was frueher das Zuruecksetzen auf SIG_DFL tat.
+     * the default disposition (hard exit) instead of stalling on a tearing-down App.
      *
-     * Erst SAMMELN, dann loeschen: waehrend der Iteration eines Views darf keine Entity
-     * zerstoert werden. Es ist genau eine — der Vektor ist die FORM, nicht die Menge.
+     * COLLECT first, then delete: no entity may be destroyed while a view is iterated. There is
+     * exactly one - the vector is the FORM, not the amount.
      */
     auto& registry = world_.registry();
     ase::containers::Vector<Entity> watch_entities;
@@ -411,8 +359,8 @@ void App::shutdown() {
     // Print shutdown sequence and call on_stop for each system
     internal::ShutdownConfig shutdown_config;
     shutdown_config.shutdown_delay_us = shutdown_delay_us_;
-    // Eine eingebettete App zeichnet keine Tabelle und gibt dem Logger seine Senken zurueck: der
-    // Host lebt nach shutdown() weiter und loggt weiter (Entladen der Plugins, naechster Start).
+    // An embedded App draws no table and hands the logger its sinks back: the host lives on
+    // after shutdown() and keeps logging (unloading the plugins, the next start).
     const bool host_owned = (lifecycle_ == APP_LIFE_HOST);
     shutdown_config.render_terminal_table = !host_owned;
     shutdown_config.restore_log_sinks = host_owned;
@@ -427,9 +375,7 @@ void App::shutdown() {
     running_.store(false);
 }
 
-// =============================================================================
 // Introspection API (port of systemRegistry.ts)
-// =============================================================================
 
 size_t App::system_count() const {
     return system_registry_->total_count();
@@ -453,6 +399,10 @@ const ase::containers::Vector<std::unique_ptr<System>>& App::systems_for(Schedul
 
 void App::schedule_trampoline(void* user, Schedule schedule, float sched_dt) {
     static_cast<App*>(user)->run_schedule_measured(schedule, sched_dt);
+}
+
+void App::event_trampoline(void* user) {
+    static_cast<App*>(user)->run_game_events();
 }
 
 void App::stopped_trampoline(void* user) {
@@ -483,16 +433,74 @@ void App::run_schedule_measured(Schedule schedule, float sched_dt) {
     run_schedule(schedule, sched_dt);
 }
 
+void App::run_game_events() {
+    /**
+     * THE CALENDAR DECIDES WHEN, THE ECS DECIDES HOW (ARCH_ASE_SCHEDULE section 6.3). The module
+     * that computes the date creates one EcsAppReqSchdComponent per crossed boundary; this drain
+     * runs between the real-time tiers and Conclusion, so whatever a game-time system writes, the
+     * Conclusion of the same tick already sees.
+     *
+     * The storage is empty in every tick without a crossing; then this costs one size check.
+     */
+    auto& registry = world_.registry();
+    if (registry.storage<EcsAppReqSchdComponent>().size() == 0u) {
+        return;
+    }
+
+    /**
+     * ORDER BY THE CROSSING, NOT BY THE ENTITY. When a long span is caught up, several boundaries
+     * fall into one tick - a dawn and the dusk after it, a new TUMBRAE and the season that starts
+     * with it - and they fire in the order the calendar crossed them.
+     */
+    registry.sort<EcsAppReqSchdComponent>(
+        [](const EcsAppReqSchdComponent& lhs, const EcsAppReqSchdComponent& rhs) {
+            return lhs.sequence < rhs.sequence;
+        });
+
+    /**
+     * TAKE ALL, DESTROY ALL, THEN RUN. The requests of this tick are taken out before the first
+     * schedule runs: a game-time system that creates a request of its own (an event that opens
+     * the next one) writes into a storage this loop no longer iterates, and its request fires in
+     * the next tick instead of invalidating this iteration.
+     */
+    ase::containers::Vector<uint32_t> schedules;
+    ase::containers::Vector<float> game_dts;
+    ase::containers::Vector<Entity> taken;
+    for (auto [entity, request] : registry.view<EcsAppReqSchdComponent>().each()) {
+        schedules.push_back(request.schedule);
+        game_dts.push_back(request.game_dt);
+        taken.push_back(entity);
+    }
+    for (uint32_t i = 0; i < taken.size(); ++i) {
+        registry.destroy(taken[i]);
+    }
+
+    const uint32_t first_value = static_cast<uint32_t>(Schedule::GameDawn);
+    const uint32_t last_value = static_cast<uint32_t>(Schedule::Aevrix);
+    for (uint32_t i = 0; i < schedules.size(); ++i) {
+        /**
+         * A REQUEST FOR A REAL-TIME SCHEDULE IS REFUSED. Its tier runs it already; a second run
+         * in the same tick would apply its dt twice and no gate would notice.
+         */
+        if (schedules[i] < first_value || schedules[i] > last_value) {
+            log::error(log::ERR::CAT::INPUT_REJECTED, "App", "run_game_events",
+                       "request names no game-time schedule; only values from GameDawn to "
+                       "Aevrix fire here");
+            continue;
+        }
+        const Schedule schedule = static_cast<Schedule>(schedules[i]);
+        run_schedule(schedule, game_dts[i]);
+        tick_scheduler_->note_event_run(schedule);
+    }
+}
+
 void App::tick(float dt) {
     /**
-     * DIE SIGNALABHOLUNG STEHT IN tick(), NICHT IN run(). Historisch, weil drei Server eigene
-     * while-Schleifen um tick() fuhren und ein Abholen in run() sie still ohne geordneten
-     * Shutdown gelassen haette; diese Schleifen sind in run() aufgegangen und alle fuenf mains
-     * rufen run(). Die Platzierung bleibt trotzdem hier: tick() ist der eine Punkt, durch den
-     * JEDER Treiber der App kommt — auch ein Test oder ein Werkzeug, das tick() direkt ruft —
-     * und die Quit-Tag-Abholung darunter braucht die Registry ohnehin je Tick.
+     * THE SIGNAL PICKUP STANDS IN tick(), NOT IN run(): tick() is the one point EVERY driver of
+     * the App passes - the five tier mains through run(), and a test or a tool that calls tick()
+     * directly as well - and the quit tag pickup below needs the registry every tick anyway.
      *
-     * Der View ist leer, wenn die Wache nicht scharf ist; dann kostet das hier nichts.
+     * The view is empty when the watch is not armed; then this costs nothing.
      */
     auto& registry = world_.registry();
     auto watch_view = registry.view<EcsAppStaShtdComponent>();
@@ -503,36 +511,30 @@ void App::tick(float dt) {
     }
 
     /**
-     * DIE ZWEITE STOPPQUELLE NEBEN DEM SIGNAL: das Quit-Tag. Ein System bekommt die Registry
-     * und nie die App — beenden kann den Prozess deshalb nur ein EREIGNIS, das der Tick abholt.
-     * Wer oberhalb von L1 fertig ist (heute: KernelCoreStopSystem in Schedule::Conclusion, im
-     * selben Durchlauf, der KernelCoreRunnTag entfernt), stampft EcsAppQuitReqTag; hier wird es
-     * gelesen. Vorher trug
-     * NUR ase-server-reasoning diese Bruecke, als Sonderschritt in seiner eigenen main-Schleife —
-     * die vier anderen Tiers tickten einen gestoppten Kernel endlos weiter. Der View ist leer,
-     * solange niemand stoppt; dann kostet das hier nichts.
+     * THE SECOND STOP SOURCE BESIDE THE SIGNAL: the quit tag. A system gets the registry and never
+     * the App - so only an EVENT the tick picks up can end the process. Whoever is done above L1
+     * (KernelCoreStopSystem in Schedule::Conclusion, in the same pass that removes
+     * KernelCoreRunnTag) stamps EcsAppQuitReqTag; it is read here, for all five tiers alike. The
+     * view is empty as long as nobody stops; then this costs nothing.
      */
     auto quit_view = registry.view<EcsAppQuitReqTag>();
     if (quit_view.begin() != quit_view.end()) {
         running_.store(false);
     }
 
-    // Hier stand ein Lambda mit [this]-Capture. Es konnte nicht bleiben, weil der Rueckruf
-    // jetzt ein blosser Funktionszeiger ist — ein Lambda mit Capture zerfaellt nicht zu einem
-    // solchen. Der Zustand, den die Capture trug, geht denselben Weg wie ueberall sonst im
-    // Baum: als undurchsichtiger Zeiger durch den Rueckruf hindurch und am anderen Ende
-    // zurueckgeholt.
-    tick_scheduler_->tick(dt, &App::schedule_trampoline, this);
+    // The callbacks are plain function pointers, so no lambda with a capture can stand here: the
+    // App goes through them as the opaque user pointer and is recovered at the other end, the
+    // same way as everywhere else in the tree.
+    tick_scheduler_->tick(dt, &App::schedule_trampoline, &App::event_trampoline, this);
 }
 
 void App::run() {
     /**
-     * EINE EINGEBETTETE APP DARF NICHT LAUFEN, NUR GETAKTET WERDEN. run() dreht eine eigene
-     * Schleife und endet mit _exit(0) - im Vivarium-Client hiesse das: Godot verliert seine
-     * Schleife, und beim ersten Stopp verschwindet die ganze Anwendung ohne einen einzigen
-     * Destruktor. Abgewiesen wird ohne Prozessabbruch und ohne die App anzufassen: der Host
-     * hat einen Vertrag verletzt, die App ist danach unveraendert ueber startup/tick/shutdown
-     * bedienbar.
+     * AN EMBEDDED APP MUST NOT RUN, ONLY BE TICKED. run() spins a loop of its own and ends with
+     * _exit(0) - in the Vivarium client that would mean: Godot loses its loop, and at the first
+     * stop the whole application vanishes without a single destructor. Refused without ending the
+     * process and without touching the App: the host broke a contract, the App stays drivable
+     * through startup/tick/shutdown unchanged.
      */
     if (lifecycle_ == APP_LIFE_HOST) {
         log::error(log::ERR::CAT::INPUT_REJECTED, "App", "run",
@@ -544,28 +546,23 @@ void App::run() {
     startup();
 
     /**
-     * GETAKTET AUF DIE FRAME-BAND-RATE, NICHT FREILAUFEND — UND DIES IST DIE EINE SCHLEIFE
-     * ALLER FUENF TIERS. Der Frame-Tier hat im Ticker interval = 0.0f und laeuft in JEDER
-     * Iteration — die Schleifenrate IST die Frame-Band-Rate. Hier stand ein festes
-     * 1-ms-Abgeben: damit lief das Frame-Band so schnell, wie die eigene Arbeit es zuliess
-     * (Obergrenze 1000 Hz statt der in schedule.hpp deklarierten 60), und ein World-/
-     * Replica-Knoten verbrannte gemessen rund 0.8 Kerne, im Leerlauf genauso wie unter Last.
-     * Engine/Reasoning/Dist trugen daneben je eine EIGENE Handschleife mit relativem Pacing
-     * und einem KONSTANTEN dt von 1/60 — zwei Bauformen, jede mit ihrem eigenen Zeitdefekt
-     * (Audit 02-schedule-landkarte.md, Walls 6 und 9). Beide Formen sind hierin aufgegangen.
+     * PACED TO THE FRAME BAND RATE, NOT FREE-RUNNING - AND THIS IS THE ONE LOOP OF ALL FIVE TIERS.
+     * The frame tier has interval = 0.0f in the ticker and runs in EVERY iteration - the loop rate
+     * IS the frame band rate. A free-running loop would run the frame band as fast as its own work
+     * allows (up to 1000 Hz instead of the 60 declared in schedule.hpp) and burn most of a core on
+     * every node, idle just as under load; a loop with a constant dt would carry a time defect of
+     * its own.
      *
-     * schedule_hz(Schedule::Reception) ist die SSOT der Rate: die 60.0f aus schedule.hpp
-     * treibt den Takt, statt unbenutzte Doku zu sein. dt bleibt die GEMESSENE Spanne, nie
-     * eine Konstante.
+     * schedule_hz(Schedule::Reception) is the SSOT of the rate: the 60.0f from schedule.hpp drives
+     * the pace instead of being unused documentation. dt stays the MEASURED span, never a constant.
      *
-     * ABSOLUTE DEADLINES, NICHT RELATIVER REST: ein Pacer, der `Budget - Arbeit` nachschlaeft,
-     * erbt die Aufwachlatenz des Schedulers als frischen Fehler in JEDEM Frame und driftet
-     * dauerhaft unter die Nennrate. sleep_until_nanos uebergibt dem Kernel die Deadline
-     * selbst; das Verschlafen eines Frames verkuerzt den Schlaf des naechsten um exakt
-     * denselben Betrag — die Langzeitrate IST die Nennrate. Ueberzieht ein Tick sein Budget,
-     * wird die Deadline NEU VERANKERT statt aufgeholt: eine Aufholjagd wuerde nach einem
-     * Stall mehrere Frames ohne Schlaf hintereinander feuern, und die Tier-Akkumulatoren
-     * arbeiten ohnehin mit dem gemessenen dt — verlorene Zeit ist dort schon verbucht.
+     * ABSOLUTE DEADLINES, NOT A RELATIVE REMAINDER: a pacer that sleeps `budget - work` inherits
+     * the wake-up latency of the scheduler as a fresh error in EVERY frame and drifts below the
+     * nominal rate for good. sleep_until_nanos hands the deadline itself to the kernel; oversleeping
+     * one frame shortens the sleep of the next by exactly the same amount - the long-term rate IS
+     * the nominal rate. When a tick overruns its budget, the deadline is ANCHORED ANEW instead of
+     * caught up: a catch-up would fire several frames without sleep in a row after a stall, and
+     * the tier accumulators work with the measured dt anyway - lost time is already booked there.
      */
     constexpr int64_t FrameIntervalNanos = static_cast<int64_t>(
         static_cast<float>(utils::NANOS_PER_SECOND) / schedule_hz(Schedule::Reception));
@@ -592,31 +589,27 @@ void App::run() {
     shutdown();
 
     /**
-     * HIER ENDET DER PROZESS, UND ZWAR VOR DEN STACK-DESTRUKTOREN. `ARCH_ASE_REP_SRV.md`
-     * (Abschnitt „libdatachannel: _exit(0) nach ECS-Shutdown") schreibt das fuer jeden Server
-     * mit libdatachannel-WebSockets vor: die rtc-Objekte blockieren beim Abbau in JEDER
-     * Variante — ws_->close(), forceClose(), reset() ohne close, connections_.clear() —, weil
-     * ihr Destruktor auf Close-Handshake und Thread-Join wartet. Ein `return 0` laeuft genau
-     * dort hinein und haengt; das OS raeumt die TCP-Sockets ohnehin auf.
+     * THE PROCESS ENDS HERE, AND BEFORE THE STACK DESTRUCTORS. `ARCH_ASE_REP_SRV.md` (section
+     * "libdatachannel: _exit(0) after ECS shutdown") prescribes it for every server with
+     * libdatachannel WebSockets: the rtc objects block on teardown in EVERY variant -
+     * ws_->close(), forceClose(), reset() without close, connections_.clear() - because their
+     * destructor waits for the close handshake and the thread join. A `return 0` runs right into
+     * that and hangs; the OS cleans up the TCP sockets anyway.
      *
-     * WARUM DIE ZEILE HIER STEHT UND NICHT FUENFMAL IN DEN main.cpp: der Vorschrift fehlte seit
-     * dem 2026-04-12 ihr Ort. Der Refactor „streamline main entry point" zog http/http_thread
-     * aus den Tier-mains in die L4-Webserver-Plugins und nahm den ganzen Shutdown-Block mitsamt
-     * `_exit(0)` mit; die Doku beschreibt seither eine main(), die es nicht mehr gibt, und alle
-     * fuenf Tiers standen auf `return 0`. Gemessen am 2026-08-28: App::run() hat GENAU FUENF
-     * Aufrufer, die fuenf Tier-mains, und jede tut danach nur noch `return 0;` — kein Test, kein
-     * Werkzeug, kein Client ruft es. Damit ist dies der einzige Ort, an dem die Regel fuer alle
-     * gilt, ohne sie fuenfmal zu wiederholen.
+     * WHY THE LINE STANDS HERE AND NOT FIVE TIMES IN THE main.cpp: App::run() has EXACTLY FIVE
+     * callers, the five tier mains, and each does nothing after it but `return 0;` - no test, no
+     * tool, no client calls it. That makes this the one place where the rule holds for all
+     * without repeating it five times.
      *
-     * DER LOGGER WIRD VORHER GESCHLOSSEN, weil _exit auch seine Puffer ueberspringt. Ohne das
-     * waeren die Shutdown-Zeilen genau in dem Lauf verloren, dessen Ende sie belegen sollen —
-     * dieselbe Signatur (Log endet mitten im Tick, keine Stopp-Zeile), an der ein abgewuergter
-     * Tier von einem sauber beendeten nicht zu unterscheiden ist.
+     * THE LOGGER IS CLOSED FIRST, because _exit skips its buffers as well. Without that the
+     * shutdown lines would be lost in exactly the run whose end they are to prove - the same
+     * signature (log ends in the middle of a tick, no stop line) by which a strangled tier cannot
+     * be told from a cleanly ended one.
      *
-     * ctx() BLEIBT DABEI UNGERAEUMT, und das ist Absicht statt Versaeumnis: App::shutdown()
-     * faehrt on_stop jedes Systems (KernelWbskConnSystem::on_stop ruft clear_all()), laesst den
-     * WebSocketResourceManager aber im ctx() stehen. Sein Destruktor ist genau der blockierende,
-     * den diese Zeile ueberspringt.
+     * ctx() STAYS UNCLEARED, and that is intent rather than omission: App::shutdown() runs the
+     * on_stop of every system (KernelWbskConnSystem::on_stop calls clear_all()), but leaves the
+     * WebSocketResourceManager standing in ctx(). Its destructor is exactly the blocking one this
+     * line skips.
      */
     ase::log::shutdown();
     ::_exit(0);
@@ -639,23 +632,21 @@ void App::run_schedule(Schedule schedule, float dt) {
     const auto& infos = system_registry_->infos();
 
     /**
-     * REGION-DOMAIN-GATE (Betreiber-Festlegung 2026-08-26): Ein Knoten ohne eigene Region
-     * simuliert NICHTS — Vorgabe jedes Moduls und Plugins ist die SIMULATION-Ebene, und die
-     * wird ohne Coverage gehalten; nur die im Manifest erklaerte Infrastruktur
-     * (APP_PLANE_KERN) tickt immer. Das Tor sitzt HIER und nur hier: je System entscheidet
-     * die bei der Registrierung gestempelte Ebene (SystemInfo.plane, deklariert aus
-     * module.toml `plane` VOR dem Laden) — kein einziger Systemrumpf traegt eine eigene
-     * Pruefung, neue Module erben die Vorgabe ohne jede Eintragung.
+     * REGION DOMAIN GATE: a node without a region of its own simulates NOTHING - the default of
+     * every module and plugin is the SIMULATION plane, and it is held without coverage; only the
+     * infrastructure declared in the manifest (APP_PLANE_KERN) always ticks. The gate sits HERE
+     * and only here: per system the plane stamped at registration decides (SystemInfo.plane,
+     * declared from module.toml `plane` BEFORE loading) - not one system body carries a check of
+     * its own, and new modules inherit the default without any entry.
      *
-     * SCHARF ist das Tor nur, wo der Kernel des Prozesses den EcsAppRgnGateTag-Anker
-     * gestempelt hat (Tier::World — die Compute-Schicht); auf jedem anderen Tier ist die
-     * Schleife byte-identisch zum Stand ohne Tor. Coverage ist die RegionRect-Nahtzeile
-     * (L0-POD) des Zuweisungsempfaengers — die RAUM-Achse und nur sie: Projekt- oder
-     * Tenant-Filter waeren das verbotene Silo-Modell (ARCH_ASE_TOPOLOGY.md).
+     * The gate is LIVE only where the kernel of the process stamped the EcsAppRgnGateTag anchor
+     * (Tier::World - the compute layer); on every other tier the loop is byte-identical to the
+     * state without a gate. Coverage is the RegionRect seam row (L0 POD) of the assignment
+     * receiver - the SPACE axis and only it: project or tenant filters would be the forbidden silo
+     * model (ARCH_ASE_TOPOLOGY.md).
      *
-     * Lifecycle-Schedules (Initialization/Configuration/Termination/Finalization) laufen
-     * auch fuer gehaltene Module: Manager-Geburt und Abbau bleiben unversehrt, gehalten
-     * wird nur die laufende Arbeit.
+     * Lifecycle schedules (Initialization/Configuration/Termination/Finalization) run for held
+     * modules too: manager birth and teardown stay intact, only the running work is held.
      */
     bool region_hold = false;
     if (world_.registry().storage<EcsAppRgnGateTag>().size() > 0u) {

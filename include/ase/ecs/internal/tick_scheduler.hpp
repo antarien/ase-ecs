@@ -6,14 +6,18 @@
  * @file        tick_scheduler.hpp
  * @brief       Data-driven tick loop using schedule metadata
  * @description Replaces 13 hardcoded accumulators with a single data-driven loop.
- *              Uses schedule_interval() and schedule_tier() from schedule.hpp as SSOT.
+ *              Uses schedule_interval() and schedule_tier() from schedule.hpp as SSOT, and
+ *              fires the game-time events of every tick through one drain before Conclusion
+ *              (ARCH_ASE_SCHEDULE section 6.3).
  *
  * @module      ase-ecs
  * @layer       1 (Core)
  * @category    process/computation/algorithm
+ * @usecase     usecase:100357 - run the tick loop
+ * @actor       Entity Component System (ECS)
  * @created     2026-02-01
- * @modified    2026-10-07
- * @version     1.2.0
+ * @modified    2026-10-25
+ * @version     1.3.0
  *
  * CORE INFRASTRUCTURE COMPLIANCE
  *
@@ -42,11 +46,9 @@
 
 namespace ase::ecs::internal {
 
-// =============================================================================
-// TIER CONFIGURATION (derived from schedule.hpp SSOT)
-// =============================================================================
-
 /**
+ * TIER CONFIGURATION (derived from schedule.hpp SSOT)
+ *
  * Tier configuration for tick scheduling.
  * Each tier groups schedules that run at the same frequency.
  */
@@ -77,24 +79,27 @@ extern const Schedule DIURNAL_SCHEDULES[];
 // Number of tiers
 constexpr size_t TIER_COUNT = 14;
 
+// Slots of the game-time run counters: one per value from GameDawn to Aevrix, the sparse enum
+// range of the game-time schedules (schedule.hpp); a value without a schedule keeps its slot at 0.
+constexpr size_t GAMETIME_SLOT_COUNT =
+    static_cast<size_t>(Schedule::Aevrix) - static_cast<size_t>(Schedule::GameDawn) + 1u;
+
 // Get tier configurations (defined in cpp)
 const TierConfig* get_tier_configs();
 
-// =============================================================================
-// TICK SCHEDULER
-// =============================================================================
-
 /**
+ * TICK SCHEDULER
+ *
  * Callback type for running a schedule.
  *
- * @param user     opaque pointer handed back unchanged — the caller's own object
+ * @param user     opaque pointer handed back unchanged - the caller's own object
  * @param schedule The schedule to run
  * @param dt       Delta time for this schedule
  *
  * A PLAIN FUNCTION POINTER plus a user pointer, not a std::function. The house form for
  * callbacks in this tree is exactly this pair (see TuiLogCallback in ase-log), and it is not a
  * stylistic preference: a std::function erases the callee's type, may allocate, and calls
- * through an indirection the optimiser cannot see past — inside a tick loop that fires up to
+ * through an indirection the optimiser cannot see past - inside a tick loop that fires up to
  * 66 times per frame.
  *
  * The user pointer is what makes the plain pointer sufficient. The one caller needs its own
@@ -102,6 +107,18 @@ const TierConfig* get_tier_configs();
  * instead, and gets it back at the front of every call.
  */
 using ScheduleRunner = void (*)(void* user, Schedule schedule, float dt);
+
+/**
+ * Callback type for draining the game-time events of one tick.
+ *
+ * @param user opaque pointer handed back unchanged - the caller's own object
+ *
+ * Called once per tick, after the real-time tiers and before Conclusion (ARCH_ASE_SCHEDULE
+ * section 6.3). The scheduler knows nothing of the calendar and holds no registry: whoever owns
+ * the registry reads the requests there, runs each named game-time schedule and reports every run
+ * back through note_event_run(). Same pair as ScheduleRunner, for the same reasons.
+ */
+using EventDrain = void (*)(void* user);
 
 /**
  * Data-driven tick scheduler.
@@ -112,15 +129,26 @@ public:
     TickScheduler();
 
     /**
-     * Process one frame tick.
-     * @param dt   Frame delta time
-     * @param run  Callback to execute schedules
-     * @param user opaque pointer passed through to every invocation of run
+     * Process one frame tick: the real-time tiers, then the game-time events, then Conclusion.
+     * @param dt    Frame delta time
+     * @param run   Callback to execute schedules
+     * @param drain Callback that fires the game-time events of this tick, once, before Conclusion
+     * @param user  opaque pointer passed through to every invocation of run and drain
      */
-    void tick(float dt, ScheduleRunner run, void* user);
+    void tick(float dt, ScheduleRunner run, EventDrain drain, void* user);
 
     /**
-     * Reset all accumulators.
+     * Count one run of a game-time schedule, reported by the drain.
+     *
+     * Game-time schedules belong to no tier, so the tier counters cannot count them; the drain
+     * that ran one reports it here, and runs() answers for it like for any other schedule.
+     *
+     * @param schedule the game-time schedule that ran; any other schedule is not counted
+     */
+    void note_event_run(Schedule schedule) noexcept;
+
+    /**
+     * Reset all accumulators and counters.
      */
     void reset();
 
@@ -134,8 +162,8 @@ public:
      *
      * Read by whoever has to bring a long real span into the App WITHOUT losing it: the embedded
      * host after the app returns from the background splits the span into ticks of exactly this
-     * length (KernelEmbeddedHost::advance). Read here, from the running scheduler, so that no
-     * caller keeps a second copy of the number.
+     * length (KernelEmbeddedHost::advance). Read here, from the running scheduler, so that the
+     * number has exactly one home and no caller holds it a second time.
      */
     [[nodiscard]] float max_frame_time() const noexcept { return max_frame_time_; }
 
@@ -145,17 +173,19 @@ public:
      * Counted where the tier runs, never derived from time: every schedule of a tier runs
      * exactly when its tier runs, so the count of the tier is the count of each of its
      * schedules, and a fixed-timestep tier that catches up runs - and counts - several times in
-     * one tick. Conclusion runs once at the end of every tick.
+     * one tick. Conclusion runs once at the end of every tick. A game-time schedule counts each
+     * run its drain reported through note_event_run().
      *
      * @param schedule the schedule to look up
      * @return the number of runs; 0 for a schedule this scheduler does not drive (lifecycle
-     *         schedules, game-time schedules)
+     *         schedules) and for a game-time schedule no event has fired yet
      */
     [[nodiscard]] uint64_t runs(Schedule schedule) const noexcept;
 
 private:
     ase::containers::Array<float, TIER_COUNT> accumulators_;
     ase::containers::Array<uint64_t, TIER_COUNT> tier_runs_;  // runs of each tier, index as TIER_CONFIGS
+    ase::containers::Array<uint64_t, GAMETIME_SLOT_COUNT> event_runs_;  // runs per game-time value, index value - GameDawn
     uint64_t tick_count_ = 0;                                  // ticks, and with them runs of Conclusion
     float max_frame_time_ = 0.25f;
 };
