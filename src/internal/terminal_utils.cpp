@@ -12,9 +12,11 @@
  * @module      ase-ecs
  * @layer       1 (Core)
  * @category    process/computation
+ * @usecase     usecase:100960 - write tiered terminal output
+ * @actor       Terminal Output Scribe (TERMOUTSCR)
  * @created     2026-02-01
- * @modified    2026-10-05
- * @version     1.1.0
+ * @modified    2026-11-05
+ * @version     1.2.0
  *
  * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
  *
@@ -70,6 +72,12 @@ void draw_terminal(bool render, const std::string& text) {
     }
     write_terminal(text);
     flush_terminal();
+}
+
+// Platform-specific: isatty on the stdout descriptor, the same descriptor get_terminal_width
+// measures with TIOCGWINSZ.
+bool terminal_redraw_supported() {
+    return isatty(STDOUT_FILENO) == 1;
 }
 
 int get_terminal_width() {

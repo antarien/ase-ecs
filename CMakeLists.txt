@@ -132,6 +132,15 @@ add_library(${PROJECT_NAME} STATIC
     include/ase/ecs/components/app/tag/ecs_app_rgn_gate_tag.hpp
 
     #[[
+    HEADERS - COMPONENTS - APP - REQUEST
+    ecs_app_req_schd_comp: one request per crossed boundary of the Antarian calendar - the
+    calendar (L3) creates it, App::tick drains it after the real-time tiers and runs the named
+    game-time schedule (usecase:100357 run the tick loop, ARCH_ASE_SCHEDULE 6.3). Included by
+    src/app.cpp and modules/ase-calendar/src/date/calendar_dat_req_sys.cpp; it stood in no list.
+    ]]
+    include/ase/ecs/components/app/request/ecs_app_req_schd_comp.hpp
+
+    #[[
     HEADERS - COMPONENTS - TAG
     Die vier Lebenszyklus-Marken des ECS. Der Grabsteinblock in system.hpp fuehrt sie als
     geschlossenen Satz; die Definitionen liegen seit dem Herausloesen in je einem

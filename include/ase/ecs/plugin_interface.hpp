@@ -9,9 +9,10 @@
  *              or `ase_plugin_interface`) and the function-pointer table behind
  *              it. The kernel's ModuleLoader finds it with dlsym at runtime, so
  *              this file is the one place in the tree where the layout is fixed
- *              by the loader rather than by the compiler.
+ *              by the loader rather than by the compiler. Through on_load in this
+ *              table every unit registers its systems with the App.
  *
- *              TWO RULE CONFLICTS STAND HERE ON PURPOSE, measured 2026-08-20:
+ *              TWO RULE CONFLICTS STAND HERE ON PURPOSE:
  *
  *                extern "C"   the exported symbol must not be mangled - dlsym
  *                             looks it up by that exact name, and a C++
@@ -25,33 +26,21 @@
  *              Here they name replacements that would remove the loading
  *              mechanism itself.
  *
- *              THE ase-markdown COMPARISON THAT STOOD HERE IS WITHDRAWN,
- *              measured 2026-08-22. It read "the same class as the WASM
- *              boundary in ase-markdown" - and that boundary did NOT keep its
- *              C linkage. src/wasm/markdown_wasm.cpp says so itself: three
- *              findings named the construction, "all three were right", and
- *              embind replaced it. The module now stands at 0 violations over
- *              13 files WITH that file checked as core_impl, and it contains
- *              extern "C" exactly zero times.
- *
- *              THE DIFFERENCE IS THE ONE THAT MATTERS, and it is why this file
- *              still cannot follow: embind IS the C++ interface the rule asks
- *              for, offered by the library itself. POSIX dlsym offers no such
- *              thing - it resolves a symbol by its exact unmangled name, and
- *              there is no C++ interface that produces one. The WASM case had
- *              a replacement available and, measured at the time, no caller at
- *              all; this one has neither: 125 files in the tree depend on these
- *              types, 119 through the export macros.
- *
- *              So the conflict stands, but it stands on its own measurement -
- *              not on a neighbour that has since moved.
+ *              WHY NO C++ INTERFACE CAN TAKE THEIR PLACE: a library that offers a
+ *              C++ binding layer (embind for WASM, as ase-markdown uses) gives the
+ *              rule its replacement. POSIX dlsym offers no such thing - it resolves
+ *              a symbol by its exact unmangled name, and there is no C++ interface
+ *              that produces one. Every module and plugin of the tree depends on
+ *              these types, most of them through the export macros.
  *
  * @module      ase-ecs
  * @layer       1 (Core)
  * @category    ecs/module
+ * @usecase     usecase:101524 - register the module systems
+ * @actor       Module Registration Conductor (MODUREGCON)
  * @created     2026-01-16
- * @modified    2026-10-05
- * @version     1.2.0
+ * @modified    2026-10-30
+ * @version     1.2.1
  *
  * CORE INFRASTRUCTURE COMPLIANCE
  *
@@ -80,12 +69,8 @@
  * management. The Kernel's ModuleLoader discovers and loads these at
  * runtime via dlopen/dlsym.
  *
- * USAGE - read at a real export site, not at a copy in this L1 header.
- * The copy that stood here named an L3 and an L4 header from inside L1 (an
- * upward edge, register C0024), passed four callbacks to macros that take
- * five, and had a plugin reach for ase-ecs directly - three faults a
- * reference copy picks up the moment the original moves on. Measured
- * 2026-10-05, the two forms in the tree:
+ * USAGE - read at a real export site. This L1 header names no L3 or L4 header
+ * itself (that would be an upward edge). The two forms in the tree:
  *
  *   Module (L3)   modules/ase-hub/src/module_export.cpp - this header, then
  *                 the module's own header; ASE_MODULE_EXPORT with get_info,
@@ -104,10 +89,9 @@
 #include <cstdint>
 #include <ase/ecs/system.hpp>  // Registry is a using-alias, cannot be forward-declared
 
-// Vorwaertsdeklarationen in der MEHRZEILIGEN Hausform (so wie die Nachbarheader in ase-ecs).
-// Die einzeilige Fassung trug denselben Abschlusskommentar, aber nicht am Zeilenanfang — und
-// genau darauf sieht die Lint-Regel (`^}  // namespace ase::`). Gleiche Bedeutung, gleiche ABI,
-// nur die Form, die der Baum ueberall sonst schon hat.
+// Vorwaertsdeklarationen in der mehrzeiligen Hausform der Nachbarheader in ase-ecs: der
+// Abschlusskommentar steht am Zeilenanfang (`^}  // namespace ase::`), wie die Lint-Regel es
+// erwartet.
 namespace ase::ecs {
 class App;
 }  // namespace ase::ecs
@@ -118,15 +102,11 @@ class KernelEventBus;
 class KernelConfigRegistry;
 }  // namespace ase::kernel
 
-// =============================================================================
 // API Version (Exact match required between loader and loaded module)
-// =============================================================================
 
 inline constexpr uint32_t ASE_API_VERSION = 4;
 
-// =============================================================================
 // Load Result Codes (returned by on_load / on_unload)
-// =============================================================================
 
 inline constexpr uint32_t ASE_LOAD_OK             = 0;
 inline constexpr uint32_t ASE_LOAD_ERROR          = 1;
@@ -134,9 +114,7 @@ inline constexpr uint32_t ASE_LOAD_MISSING_DEP    = 2;
 inline constexpr uint32_t ASE_LOAD_MISSING_CONFIG = 3;
 inline constexpr uint32_t ASE_LOAD_INIT_FAILED    = 4;
 
-// =============================================================================
 // Module Info (returned by get_info callback)
-// =============================================================================
 
 struct AseModuleInfo {
     const char* name;           // e.g., "ase-hub", "ase-pl-sky"
@@ -145,9 +123,7 @@ struct AseModuleInfo {
     uint32_t    layer;          // 3 = Module (L3), 4 = Plugin (L4)
 };
 
-// =============================================================================
 // Plugin Context (passed to on_load/on_unload)
-// =============================================================================
 
 struct AseLoadContext {
     ase::ecs::App*                       app       = nullptr;
@@ -157,9 +133,7 @@ struct AseLoadContext {
     ase::kernel::KernelConfigRegistry*   config    = nullptr;
 };
 
-// =============================================================================
 // Function pointer types
-// =============================================================================
 
 using AseModuleInfoFn          = AseModuleInfo (*)();
 using AseModuleLoadFn          = uint32_t (*)(AseLoadContext*);
@@ -167,9 +141,7 @@ using AseModuleUnloadFn        = uint32_t (*)(AseLoadContext*);
 using AseModuleConfigChangedFn = void (*)(AseLoadContext*, const char* key, const char* value);
 using AseModuleCleanFn         = void (*)();
 
-// =============================================================================
 // Module Interface (exported as C symbol via dlsym)
-// =============================================================================
 
 struct AseModuleInterface {
     AseModuleInfoFn          get_info;          // Returns module metadata
@@ -179,21 +151,16 @@ struct AseModuleInterface {
     AseModuleCleanFn         cleanup;           // Called before dlclose (resource cleanup)
 };
 
-// =============================================================================
 // Export Macros
-// =============================================================================
 //
-// PROTECTED, NOT DEFAULT VISIBILITY - measured 2026-10-05.
-// Every module exports the SAME name, and the kernel loader opens each one with
-// RTLD_GLOBAL (load_entry in kernel_module_resource_manager.cpp). The fix sits on
-// the symbol, not on that flag, so it holds under either load form. With default visibility
-// the first loaded library's definition entered the global scope, and each
-// library loaded after it bound ITS OWN reference to that one: AddressSanitizer
-// reported one address registered by two libraries (odr-violation,
-// ase-kernel-embedded-test loading two probe plugins). Protected keeps the symbol
-// exported - dlsym finds it exactly as before - and binds every reference inside
-// the defining library to its own definition. Name, layout and ASE_API_VERSION
-// are unchanged.
+// PROTECTED, NOT DEFAULT VISIBILITY. Every module exports the SAME name, and the kernel
+// loader opens each one with RTLD_GLOBAL (load_entry in kernel_module_resource_manager.cpp).
+// The rule sits on the symbol, not on that flag, so it holds under either load form. With
+// default visibility the first loaded library's definition enters the global scope, and each
+// library loaded after it binds ITS OWN reference to that one - AddressSanitizer reports one
+// address registered by two libraries (odr-violation, ase-kernel-embedded-test loading two
+// probe plugins). Protected keeps the symbol exported - dlsym finds it by name - and binds
+// every reference inside the defining library to its own definition.
 
 // L3 Module: exports symbol "ase_module_interface"
 #define ASE_MODULE_EXPORT(info_fn, load_fn, unload_fn, cfg_fn, cleanup_fn) \

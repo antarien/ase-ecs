@@ -7,23 +7,31 @@
  * @description Draws the startup progress grouped by schedule, with module
  *              colours, timestamps and dependency chains.
  *
- *              THIS FILE IS THE CONSOLE SINK DURING BOOT, and that is why it
- *              writes to the terminal directly. It clears the ase::log sinks,
- *              installs its own queue sink so no log line can interleave with
- *              the table it is drawing, and restores the original sinks when
- *              the boot block ends. Sending its own output through ase::log
- *              would feed it into the sink this file just installed - and
+ *              THIS FILE IS A TERMINAL RENDERER, NOT A LOG SITE, and that is
+ *              why it writes to the terminal directly. During the first boot
+ *              block ase-log withholds its console sink and collects every
+ *              record in its capture ring until finalize_logger_after_boot;
+ *              for the deferred block below, this file opens the bracket
+ *              log::capture_begin/replay/end itself. No log line can therefore
+ *              interleave with the table. Sending the table through ase::log
  *              would prefix an aligned, box-drawn table with timestamp, level
- *              and category. It is a terminal RENDERER, not a log site.
+ *              and category.
+ *
+ *              Each step is announced by a "[..]" row that the "[OK]" row
+ *              replaces once on_start has returned. The replacement needs a
+ *              terminal on stdout (terminal_redraw_supported); on a pipe the
+ *              finished row is drawn alone.
  *
  *              Internal implementation detail of ase-ecs.
  *
  * @module      ase-ecs
  * @layer       1 (Core)
  * @category    process/computation
+ * @usecase     usecase:100960 - write tiered terminal output
+ * @actor       Terminal Output Scribe (TERMOUTSCR)
  * @created     2026-02-01
- * @modified    2026-10-05
- * @version     1.1.0
+ * @modified    2026-11-05
+ * @version     1.2.0
  *
  * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
  *
@@ -44,7 +52,7 @@
 #include <ase/ecs/internal/boot_logger.hpp>
 #include <ase/ecs/internal/terminal_utils.hpp>
 #include <ase/log/log.hpp>
-#include <ase/log/log_lifecycle.hpp>  // die Capture-Klammer um die Boot-Tabelle
+#include <ase/log/log_lifecycle.hpp>  // the capture bracket around the boot table
 #include <ase/log/colors.hpp>
 
 #include <cstdio>
@@ -71,11 +79,6 @@ constexpr size_t MS_BUFFER_BYTES = 32;
 // the value leaves room for a longer tier without ever running off the end of a string
 // that carries no terminator.
 constexpr uint32_t TIER_NAME_MAX = 32;
-
-// Hier stand eine Queue-Senke, die von der Logbibliothek erbte und den Senkenvektor des
-// Loggers von Hand austauschte. shutdown_sequence.cpp trug dieselbe Klasse ein zweites Mal.
-// Beide sind seit 2026-08-20 durch die Klammer log::capture_begin/replay/end ersetzt: die
-// Senken gehoeren dem Logger, also gehoert das Umhaengen in ase-log.
 
 // Get tier color based on schedule tier name.
 //
@@ -192,6 +195,9 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
     size_t current_system = 0;
     std::string line = terminal_line();
 
+    // Measured once for the whole table: stdout does not change between two rows.
+    const bool redraw = terminal_redraw_supported();
+
     // O(1) lookups via persistent maps in SystemRegistry (no temp-maps!)
     // name_to_system: registry.find_system(name)
     // source_totals:  registry.source_total(source)
@@ -203,8 +209,10 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
     // on_start cannot reach stdout until finalize_logger_after_boot runs
     // below. No interleaving into this progress table.
 
-    // Header. Built whole and flushed once - the stream form flushed after each of the
-    // four lines, which put the same bytes on the terminal through four calls.
+    // Header. Built whole and flushed once. ONE rule per table, above its title: it is the
+    // only separator between two tables. A rule under the title and a rule as footer drew
+    // three rules per table, and the footer of one table stood directly on the rule of the
+    // next.
     std::string header = "\n";
     header += ansi::DIM;
     header += line;
@@ -213,14 +221,10 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
     header += ansi::DIM;
     header += "(";
     header += std::to_string(total_systems);
-    header += " systems)";
+    header += total_systems == 1 ? " system)" : " systems)";
     header += ansi::RESET;
     header += "\n";
-    header += ansi::DIM;
-    header += line;
-    header += ansi::RESET;
-    header += "\n";
-    draw_terminal(config.render_terminal_table,header);
+    draw_terminal(config.render_terminal_table, header);
 
     // Track current index per source (for module-local counter)
     ase::containers::HashMap<std::string, size_t> source_current_idx;
@@ -256,7 +260,7 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
             sched_header += ansi::RESET;
         }
         sched_header += "\n";
-        draw_terminal(config.render_terminal_table,sched_header);
+        draw_terminal(config.render_terminal_table, sched_header);
 
         std::string prev_source;
         size_t prev_module_count = 0;
@@ -272,7 +276,7 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
                     gap += "│";
                     gap += ansi::RESET;
                     gap += "\n";
-                    draw_terminal(config.render_terminal_table,gap);
+                    draw_terminal(config.render_terminal_table, gap);
                 }
             }
 
@@ -288,10 +292,10 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
             size_t module_idx = source_current_idx[info->source];
             size_t module_total = registry.source_total(info->source);
 
-            // Boot delay. The `> 0` guard is LOad-BEARING and not a nicety: boot_delay_us is
-            // a signed int (its declaration in boot_logger.hpp), sleep_nanos takes an unsigned span, and a
-            // negative value would wrap into a sleep of some three hundred years. The
-            // stream form this replaced tolerated it - sleep_for returns at once on a
+            // Boot delay. The `> 0` guard is LOAD-BEARING and not a nicety: boot_delay_us is
+            // a signed int (its declaration in boot_logger.hpp), sleep_nanos takes an unsigned
+            // span, and a negative value would wrap into a sleep of some three hundred years.
+            // The stream form this replaced tolerated it - sleep_for returns at once on a
             // negative duration - so the guard is what carries that behaviour across.
             if (config.boot_delay_us > 0) {
                 ase::platform::sleep_nanos(static_cast<uint64_t>(config.boot_delay_us) *
@@ -357,35 +361,41 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
 
             // Print [..] before on_start, then [source] SystemName. This one MUST be
             // flushed on its own: it announces a step that has not run yet, and the
-            // overwrite below replaces exactly this line.
-            std::string pending = line_content;
-            pending += ansi::YELLOW;
-            pending += "[..]";
-            pending += ansi::RESET;
-            pending += " \x1b[38;5;";
-            pending += std::to_string(mod_color);
-            pending += "m[";
-            pending += info->source;
-            pending += "]";
-            pending += ansi::RESET;
-            pending += " ";
-            pending += ansi::WHITE;
-            pending += info->name;
-            pending += ansi::RESET;
-            draw_terminal(config.render_terminal_table,pending);
+            // overwrite below replaces exactly this line. On a pipe nothing can replace
+            // it, so the announcement is not drawn there at all.
+            if (redraw) {
+                std::string pending = line_content;
+                pending += ansi::YELLOW;
+                pending += "[..]";
+                pending += ansi::RESET;
+                pending += " \x1b[38;5;";
+                pending += std::to_string(mod_color);
+                pending += "m[";
+                pending += info->source;
+                pending += "]";
+                pending += ansi::RESET;
+                pending += " ";
+                pending += ansi::WHITE;
+                pending += info->name;
+                pending += ansi::RESET;
+                draw_terminal(config.render_terminal_table, pending);
+            }
 
             // Call on_start. The logger stays silent on stdout here because
-            // no console sink is attached yet — that happens in
+            // no console sink is attached yet - that happens in
             // finalize_logger_after_boot (called below after the footer).
             auto* system = registry.find_system(info->name);
             if (system) {
                 system->on_start(world.registry());
             }
 
-            // Overwrite with [OK] [source] SystemName. The carriage return plus erase
-            // sequence rewrites the [..] line printed above - the one thing a log backend
-            // cannot do, and the reason this file draws instead of logging.
-            std::string done = "\r\x1b[K";
+            // [OK] [source] SystemName. On a terminal the erase sequence first takes back
+            // the [..] row drawn above - the one thing a log backend cannot do, and the
+            // reason this file draws instead of logging.
+            std::string done;
+            if (redraw) {
+                done += ansi::ERASE_ROW;
+            }
             done += line_content;
             done += ansi::OK_GREEN;
             done += "[OK]";
@@ -401,7 +411,7 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
             done += info->name;
             done += ansi::RESET;
             done += "\n";
-            draw_terminal(config.render_terminal_table,done);
+            draw_terminal(config.render_terminal_table, done);
 
             // Dependencies on separate sub-line (all listed, no truncation)
             if (config.show_dependencies and !info->run_after.empty()) {
@@ -418,25 +428,18 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
                 }
                 deps += ansi::RESET;
                 deps += "\n";
-                draw_terminal(config.render_terminal_table,deps);
+                draw_terminal(config.render_terminal_table, deps);
             }
         }
     }
 
-    // Footer
-    std::string footer = "\n";
-    if (!registry.has_pending()) {
-        footer += ansi::DIM;
-        footer += line;
-        footer += ansi::RESET;
-        footer += "\n\n";
-    }
-    draw_terminal(config.render_terminal_table,footer);
+    // No footer rule: the table ends with its last row, and the rule above the next title
+    // separates it from whatever follows.
 
     // Finalize the logger: attach the console sink (parked in ase-log during
-    // LogSystem::on_start), replay the capture-ring — which holds every log
+    // LogSystem::on_start), replay the capture-ring - which holds every log
     // line produced by Kernel::build, KernelEnvLdrSystem, KernelCmdSystem
-    // AND every system's on_start during the boot block above — into all
+    // AND every system's on_start during the boot block above - into all
     // sinks (console + file + HTTP-ring + counting), then detach + drop
     // the capture ring. Every entry lands both on stdout and in
     // logs/{server}-{port}.log with correct [LABEL] + uppercase level format.
@@ -473,10 +476,13 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
 
     std::string line = terminal_line();
 
-    // Logausgabe umleiten, damit eine Zeile aus irgendeinem on_start die [..]→[OK]-Zeilen
-    // nicht zerreisst. Diese Stelle liegt NACH finalize_logger_after_boot (weiter oben in
-    // dieser Datei): davor haelt ase-log die Ausgabe ohnehin zurueck, ab dort nicht mehr —
-    // deshalb ist die Klammer hier noetig und nicht bloss uebernommener Altbestand.
+    // Measured once for both layers: stdout does not change between two rows.
+    const bool redraw = terminal_redraw_supported();
+
+    // Redirect log output so that a line from any on_start cannot tear a [..]/[OK] row
+    // apart. This point lies AFTER finalize_logger_after_boot (in print_boot_sequence
+    // above): before it ase-log withholds the console on its own, from there on it no
+    // longer does - which is why the bracket is needed here.
     (void)log::capture_begin();
 
     // Track per-source counters (same pattern as print_boot_sequence)
@@ -496,12 +502,8 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
         section += std::to_string(section_count);
         section += ")";
         section += ansi::RESET;
-        section += "\n";
-        section += ansi::DIM;
-        section += line;
-        section += ansi::RESET;
         section += "\n\n";
-        draw_terminal(config.render_terminal_table,section);
+        draw_terminal(config.render_terminal_table, section);
 
         Schedule prev_schedule = static_cast<Schedule>(-1);
 
@@ -545,7 +547,7 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
                         pending_header += ansi::RESET;
                     }
                     pending_header += "\n";
-                    draw_terminal(config.render_terminal_table,pending_header);
+                    draw_terminal(config.render_terminal_table, pending_header);
                     header_printed = true;
                     prev_schedule = schedule;
                 }
@@ -603,21 +605,24 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
                     line_content += " ";
                 }
 
-                std::string pending_line = line_content;
-                pending_line += ansi::YELLOW;
-                pending_line += "[..]";
-                pending_line += ansi::RESET;
-                pending_line += " \x1b[38;5;";
-                pending_line += std::to_string(mod_color);
-                pending_line += "m[";
-                pending_line += source;
-                pending_line += "]";
-                pending_line += ansi::RESET;
-                pending_line += " ";
-                pending_line += ansi::WHITE;
-                pending_line += system->name();
-                pending_line += ansi::RESET;
-                draw_terminal(config.render_terminal_table,pending_line);
+                // The announcement exists only where the [OK] row can take it back.
+                if (redraw) {
+                    std::string pending_line = line_content;
+                    pending_line += ansi::YELLOW;
+                    pending_line += "[..]";
+                    pending_line += ansi::RESET;
+                    pending_line += " \x1b[38;5;";
+                    pending_line += std::to_string(mod_color);
+                    pending_line += "m[";
+                    pending_line += source;
+                    pending_line += "]";
+                    pending_line += ansi::RESET;
+                    pending_line += " ";
+                    pending_line += ansi::WHITE;
+                    pending_line += system->name();
+                    pending_line += ansi::RESET;
+                    draw_terminal(config.render_terminal_table, pending_line);
+                }
 
                 // MONOTONIC, not the wall clock: this measures how long one on_start took,
                 // and a wall clock can be set - an NTP correction mid-boot would print a
@@ -627,7 +632,10 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
                 const int64_t us =
                     (ase::utils::monotonic_nanos() - start_nanos) / ase::utils::NANOS_PER_MICRO;
 
-                std::string done_line = "\r\x1b[K";
+                std::string done_line;
+                if (redraw) {
+                    done_line += ansi::ERASE_ROW;
+                }
                 done_line += line_content;
                 done_line += ansi::OK_GREEN;
                 done_line += "[OK]";
@@ -657,7 +665,7 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
                     done_line += ansi::RESET;
                 }
                 done_line += "\n";
-                draw_terminal(config.render_terminal_table,done_line);
+                draw_terminal(config.render_terminal_table, done_line);
 
                 pending_names.erase(it);
             }
@@ -674,28 +682,11 @@ void boot_pending_systems(SystemRegistry& registry, World& world,
         boot_layer(true, "L4 Plugins", l4_count);
     }
 
-    // Footer
-    std::string pending_footer = "\n";
-    pending_footer += ansi::DIM;
-    pending_footer += line;
-    pending_footer += ansi::RESET;
-    pending_footer += "\n\n";
-    draw_terminal(config.render_terminal_table,pending_footer);
+    // No footer rule, the same as the main table: one rule per section, above its title.
 
-    // Die gesammelten Zeilen durch die gemerkten Senken abspielen, dann die Klammer schliessen
-    // und die Senken zurueckstellen — der Prozess laeuft weiter und braucht sie.
-    //
-    // Hier filterten zwei dynamic_casts die Konsolen-Senken aus dem Abspielen heraus. Sie sind
-    // ersatzlos entfallen, weil sie nichts gefunden haben: im Server-Pfad haengen am Logger ein
-    // Datei-Sink, ein HTTP-Ringpuffer und ein Zaehler — GEMESSEN in ase-log, das genau zwei
-    // Senken baut (beides Ringpuffer) und in finalize_logger_after_boot genau drei anhaengt,
-    // keine davon eine Konsole. Die einzige Konsolen-Senke des Moduls entsteht in
-    // init_standalone fuer CLI-Werkzeuge, die keine Boot-Tabelle zeichnen.
-    //
-    // Der Filter suchte also nach etwas, das hier nie am Logger haengt. Ihn mitzunehmen haette
-    // einen wirkungslosen Mechanismus in ein zweites Modul getragen; die Begruendung dafuer
-    // steht jetzt an capture_replay() in log.hpp, wo sie neu entschieden werden muss, falls je
-    // eine Konsolen-Senke dazukommt.
+    // Play the collected lines through the sinks that were active at capture_begin, then
+    // close the bracket and hand the sinks back - the process keeps running and needs them.
+    // Which sinks a replay reaches is decided at capture_replay() in log.hpp.
     (void)log::capture_replay();
     log::capture_end(true);
 }

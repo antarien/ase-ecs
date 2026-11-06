@@ -7,14 +7,17 @@
  * @brief       System storage and metadata management
  * @description Stores systems organized by schedule with their metadata.
  *              All lookups are O(1) via persistent hash maps populated at insert time.
- *              Internal implementation detail of ase-ecs.
+ *              Internal implementation detail of ase-ecs. Every module registers its
+ *              systems through App::add_system, and this registry is where they land.
  *
  * @module      ase-ecs
  * @layer       1 (Core)
  * @category    structure/datatype
+ * @usecase     usecase:101524 - register the module systems
+ * @actor       Module Registration Conductor (MODUREGCON)
  * @created     2026-02-01
- * @modified    2026-08-20
- * @version     1.0.0
+ * @modified    2026-10-30
+ * @version     1.0.1
  *
  * CORE INFRASTRUCTURE COMPLIANCE
  *
@@ -47,9 +50,7 @@
 
 namespace ase::ecs::internal {
 
-// =============================================================================
-// SystemInfo - Metadata for each registered system
-// =============================================================================
+// SystemInfo - metadata for each registered system
 
 struct SystemInfo {
     std::string name;
@@ -63,16 +64,14 @@ struct SystemInfo {
     // (never observable as defaults) so the tick loop attributes O(1).
     uint32_t mod_hash = 0;  // FNV-1a32 (entt::hashed_string) of source
     uint32_t grp_id = 0;    // module-group id (ase::types::mod_grp_of; MOD_GRP_ID_NONE = unregistered)
-    // Region-Domain-Gate (App::run_schedule): Ebene des Quell-Moduls aus dessen Manifest
-    // (module.toml `plane`, deklariert VOR dem Laden via set_module_plane). Vorgabe ist
-    // SIMULATION - jedes Modul ohne erklaerte Ausnahme wird ohne RegionRect-Coverage gehalten
-    // (Betreiber-Festlegung 2026-08-26). Werte: ecs::APP_PLANE_* (app.hpp).
+    // Region-domain gate (App::run_schedule): plane of the source module from its manifest
+    // (module.toml `plane`, declared BEFORE loading via set_module_plane). The default is
+    // SIMULATION - every module without a declared exception is held while no RegionRect
+    // coverage stands. Values: ecs::APP_PLANE_* (app.hpp).
     uint8_t plane = 0;
 };
 
-// =============================================================================
-// PendingEntry - System added after boot started (Late-System-Registration)
-// =============================================================================
+// PendingEntry - system added after boot started (late system registration)
 
 struct PendingEntry {
     System* system = nullptr;
@@ -82,9 +81,7 @@ struct PendingEntry {
     std::unique_ptr<System> owned_system;
 };
 
-// =============================================================================
-// SystemRegistry - System storage and metadata (O(1) lookups)
-// =============================================================================
+// SystemRegistry - system storage and metadata (O(1) lookups)
 
 class SystemRegistry {
 public:
@@ -184,9 +181,7 @@ public:
      */
     size_t schedule_source_count(Schedule schedule, const std::string& source) const;
 
-    // =========================================================================
-    // Late-System-Registration (dlopen Module Support)
-    // =========================================================================
+    // Late system registration (dlopen module support)
 
     /**
      * Mark that boot has started. Systems added after this point are queued.
@@ -204,9 +199,7 @@ public:
      */
     ase::containers::Vector<PendingEntry> drain_pending();
 
-    // =========================================================================
-    // Hot-Reload Support (Phase 9)
-    // =========================================================================
+    // Hot-reload support
 
     /**
      * Remove all systems registered by a specific source (module/plugin name).
@@ -227,14 +220,14 @@ private:
     ase::containers::HashMap<std::string, System*> name_to_system_;
     ase::containers::HashMap<std::string, size_t> name_to_index_;
     ase::containers::HashMap<std::string, size_t> source_totals_;
-    // Modul → Gate-Ebene (set_module_plane, vor dem Laden deklariert); fehlender
-    // Eintrag = SIMULATION-Vorgabe. Schluessel ist der Quellname wie in SystemInfo.source.
+    // Module → gate plane (set_module_plane, declared before loading); a missing entry
+    // means the SIMULATION default. The key is the source name as in SystemInfo.source.
     ase::containers::HashMap<std::string, uint8_t> module_planes_;
     ase::containers::HashMap<Schedule, ase::containers::Vector<size_t>> schedule_info_indices_;
     ase::containers::HashMap<Schedule, ase::containers::HashMap<std::string, size_t>> schedule_source_counts_;
     size_t total_count_ = 0;
 
-    // Late-System-Registration
+    // Late system registration
     bool boot_started_ = false;
     ase::containers::Vector<PendingEntry> pending_;
 };

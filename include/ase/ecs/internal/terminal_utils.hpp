@@ -11,9 +11,11 @@
  * @module      ase-ecs
  * @layer       1 (Core)
  * @category    process/computation
+ * @usecase     usecase:100960 - write tiered terminal output
+ * @actor       Terminal Output Scribe (TERMOUTSCR)
  * @created     2026-02-01
- * @modified    2026-10-05
- * @version     1.1.0
+ * @modified    2026-10-30
+ * @version     1.1.1
  *
  * CORE INFRASTRUCTURE COMPLIANCE
  *
@@ -40,9 +42,7 @@
 
 namespace ase::ecs::internal {
 
-// =============================================================================
-// ANSI COLOR CONSTANTS
-// =============================================================================
+// ANSI color constants
 
 namespace ansi {
 
@@ -58,6 +58,10 @@ constexpr const char* WHITE   = "\x1b[37m";
 
 // Muted green (same as [INF] in logs)
 constexpr const char* OK_GREEN = "\x1b[38;5;71m";
+
+// Carriage return plus erase-to-end-of-line: takes back the row the cursor stands on. Drawn
+// only where terminal_redraw_supported() holds; on a pipe it would leave both rows in the text.
+constexpr const char* ERASE_ROW = "\r\x1b[K";
 
 }  // namespace ansi
 
@@ -83,9 +87,7 @@ constexpr int SOURCE_COLORS[] = {
 };
 constexpr size_t SOURCE_COLOR_COUNT = sizeof(SOURCE_COLORS) / sizeof(SOURCE_COLORS[0]);
 
-// =============================================================================
-// TERMINAL FUNCTIONS
-// =============================================================================
+// Terminal functions
 
 /**
  * Write text to the terminal unchanged - no prefix, no newline, no level.
@@ -133,13 +135,27 @@ void flush_terminal();
 void draw_terminal(bool render, const std::string& text);
 
 /**
+ * Whether stdout can take back the row it is on.
+ *
+ * The boot and shutdown views announce each step with a "[..]" row and replace it with the
+ * "[OK]" row through ansi::ERASE_ROW once on_start or on_stop has returned. That replacement
+ * needs a terminal. When stdout is a pipe - the test runner captures every binary's output and
+ * frames each row with its own prefix - the carriage return lands at column 0 of the captured or
+ * wrapped row, both rows survive in the text, and the table reads as shifted, duplicated lines.
+ * Without a terminal a view draws the finished row alone.
+ *
+ * @return true when stdout is a terminal device
+ */
+[[nodiscard]] bool terminal_redraw_supported();
+
+/**
  * Get terminal width in columns.
  * Returns 80 as default if not detectable.
  */
 int get_terminal_width();
 
 /**
- * Generate a line of box-drawing characters (━) matching terminal width.
+ * Generate a line of box-drawing characters (U+2501) matching terminal width.
  */
 std::string terminal_line();
 

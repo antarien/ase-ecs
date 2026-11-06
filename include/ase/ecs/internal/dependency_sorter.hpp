@@ -6,14 +6,17 @@
  * @file        dependency_sorter.hpp
  * @brief       Topological sort for system dependencies
  * @description Sorts systems within each schedule based on run_after dependencies
- *              using Kahn's algorithm. Returns error on cycle detection.
+ *              using Kahn's algorithm. Returns error on cycle detection. Runs once
+ *              after the modules registered their systems and before the first tick.
  *
  * @module      ase-ecs
  * @layer       1 (Core)
  * @category    process/computation/algorithm
+ * @usecase     usecase:101524 - register the module systems
+ * @actor       Module Registration Conductor (MODUREGCON)
  * @created     2026-02-01
- * @modified    2026-08-20
- * @version     1.0.0
+ * @modified    2026-10-30
+ * @version     1.0.1
  *
  * CORE INFRASTRUCTURE COMPLIANCE
  *
@@ -43,18 +46,14 @@
 
 namespace ase::ecs::internal {
 
-// =============================================================================
-// CYCLE DETECTION RESULT
-// =============================================================================
+// Cycle detection result
 
 struct CycleError {
     Schedule schedule;
     ase::containers::Vector<std::string> cycle_participants;  // Systems involved in cycle
 };
 
-// =============================================================================
-// DEPENDENCY SORTER
-// =============================================================================
+// Dependency sorter
 
 /**
  * Sort systems within each schedule by their dependencies.

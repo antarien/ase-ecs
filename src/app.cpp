@@ -276,7 +276,9 @@ void App::startup() {
     internal::BootLoggerConfig boot_config;
     boot_config.boot_delay_us = boot_delay_us_;
     // The terminal belongs to the host: on_start runs unchanged, only the table is left out.
-    boot_config.render_terminal_table = !host_owned;
+    // An App without a system draws no table either: a title and a frame with no row under
+    // them say nothing the count would not.
+    boot_config.render_terminal_table = !host_owned && system_registry_->total_count() > 0;
     internal::print_boot_sequence(*system_registry_, world_, boot_config);
 
     // Late-System-Registration: if on_start() added new systems (e.g., dlopen modules),
@@ -362,7 +364,9 @@ void App::shutdown() {
     // An embedded App draws no table and hands the logger its sinks back: the host lives on
     // after shutdown() and keeps logging (unloading the plugins, the next start).
     const bool host_owned = (lifecycle_ == APP_LIFE_HOST);
-    shutdown_config.render_terminal_table = !host_owned;
+    // No table for an App without a system - the log line "[Shutdown] sequence entered
+    // (0 systems)" still marks the entry into teardown.
+    shutdown_config.render_terminal_table = !host_owned && system_registry_->total_count() > 0;
     shutdown_config.restore_log_sinks = host_owned;
     // After the LAST on_stop, before the log replay: the one point where no system runs and the
     // App still stands (set_on_stopped).

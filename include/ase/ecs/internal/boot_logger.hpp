@@ -6,15 +6,17 @@
  * @file        boot_logger.hpp
  * @brief       Boot sequence visualization with colored output
  * @description Displays system startup progress with schedule grouping,
- *              module colors, timestamps, and dependency chains.
+ *              module colors, timestamps, and dependency chains. The table is
+ *              tiered terminal output: one block per schedule, one line per system.
  *
  * @module      ase-ecs
  * @layer       1 (Core)
  * @category    process/computation
- * @usecase     usecase:100355 - run the boot sequence
+ * @usecase     usecase:100960 - write tiered terminal output
+ * @actor       Terminal Output Scribe (TERMOUTSCR)
  * @created     2026-02-01
- * @modified    2026-10-11
- * @version     1.1.0
+ * @modified    2026-10-30
+ * @version     1.1.1
  *
  * CORE INFRASTRUCTURE COMPLIANCE
  *
@@ -51,20 +53,18 @@ struct BootLoggerConfig {
     int boot_delay_us = 0;  // Visual delay per system (microseconds), default: 0 (fast)
     bool show_dependencies = true;
     bool show_timestamps = true;
-    // Die Fortschrittstabelle gehoert dem, der das Terminal besitzt. Ein Tier-Server besitzt
-    // es (true, Vorgabe); ein eingebetteter Host wie Godot im Vivarium-Client besitzt es nicht
-    // und bekommt keine Tabelle (false, App mit APP_LIFE_HOST). on_start laeuft in BEIDEN
-    // Faellen in derselben Reihenfolge - unterdrueckt wird nur das Zeichnen.
+    // The progress table belongs to whoever owns the terminal. A tier server owns it
+    // (true, the default); an embedded host such as Godot in the Vivarium client does not
+    // and gets no table (false, App with APP_LIFE_HOST). on_start runs in BOTH cases in the
+    // same order - only the drawing is suppressed.
     bool render_terminal_table = true;
 };
 
 /**
  * Print boot sequence with system on_start calls.
  *
- * Format:
- * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- *   ASE Schedule Bootstrap (162 systems)
- * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ * Format: a full-width rule of U+2501 (terminal_line), the title line
+ * "ASE Schedule Bootstrap (162 systems)", a second rule, then one group per schedule:
  *
  *   ┌─ Initialization (once)
  *   │ [46:40.867] [Boot] [001/162] [ase-kernel] [OK] KernelCoreLfcSystem
@@ -79,7 +79,7 @@ void print_boot_sequence(SystemRegistry& registry, World& world,
 
 /**
  * Boot only systems that were added after the initial boot pass.
- * Called by App::startup() when has_pending() is true (Late-System-Registration).
+ * Called by App::startup() when has_pending() is true (late system registration).
  * Calls on_start() on each pending system and logs them in the same boot format.
  *
  * @param registry System registry (systems added during on_start of initial pass)

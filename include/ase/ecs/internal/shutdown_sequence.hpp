@@ -12,9 +12,10 @@
  * @layer       1 (Core)
  * @category    process/computation
  * @usecase     usecase:100356 - run the shutdown sequence
+ * @actor       Entity Registry Steward (ENTIREGSTE)
  * @created     2026-02-01
- * @modified    2026-10-11
- * @version     1.1.0
+ * @modified    2026-10-30
+ * @version     1.1.1
  *
  * CORE INFRASTRUCTURE COMPLIANCE
  *
@@ -50,19 +51,19 @@ namespace ase::ecs::internal {
 struct ShutdownConfig {
     int shutdown_delay_us = 0;  // Visual delay per system (microseconds), default: 0 (fast)
     bool show_timestamps = true;
-    // Wie in BootLoggerConfig: die Tabelle zeichnet nur, wer das Terminal besitzt. Ein
-    // eingebetteter Host (App mit APP_LIFE_HOST) setzt false; on_stop laeuft trotzdem fuer
-    // jedes System in derselben umgekehrten Reihenfolge.
+    // As in BootLoggerConfig: only whoever owns the terminal draws the table. An embedded
+    // host (App with APP_LIFE_HOST) sets false; on_stop still runs for every system in the
+    // same reverse order.
     bool render_terminal_table = true;
-    // Ob der Logger nach dem Abbau seine Senken zurueckbekommt. Ein Tier-Server endet direkt
-    // danach mit _exit(0) und spielt die gesammelten Zeilen selbst aufs Terminal (false,
-    // Vorgabe). Ein eingebetteter Host LEBT nach dem Abbau weiter: ohne Rueckgabe gingen jede
-    // spaetere Logzeile - Entladen der Plugins, Fehler beim Abbau, der naechste Neustart - und
-    // die Zeilen aus on_stop selbst ins Leere (true, App mit APP_LIFE_HOST).
+    // Whether the logger gets its sinks back after the teardown. A tier server ends right
+    // after with _exit(0) and plays the collected lines onto the terminal itself (false, the
+    // default). An embedded host LIVES ON after the teardown: without the return, every later
+    // log line - unloading the plugins, teardown errors, the next restart - and the lines
+    // from on_stop itself would go nowhere (true, App with APP_LIFE_HOST).
     bool restore_log_sinks = false;
-    // Gerufen GENAU EINMAL, nachdem das on_stop des LETZTEN Systems zurueckkam - vor Fusszeile und
-    // Log-Wiedergabe, also mit noch mitgeschnittenen Zeilen. Der einzige Punkt, an dem kein System
-    // mehr laeuft und die App noch steht: dort entlaedt der Kernel seine Module (App::set_on_stopped).
+    // Called EXACTLY ONCE after on_stop of the LAST system returned - before the footer and
+    // the log replay, so with lines still captured. The one point where no system runs any
+    // more and the App still stands: the kernel unloads its modules there (App::set_on_stopped).
     void (*after_all_stopped)(void* user) = nullptr;
     void* after_all_stopped_user = nullptr;
 };
@@ -70,10 +71,8 @@ struct ShutdownConfig {
 /**
  * Print shutdown sequence with system on_stop calls.
  *
- * Format:
- * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- *   ASE Shutdown Sequence (162 systems)
- * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ * Format: a full-width rule of U+2501 (terminal_line), the title line
+ * "ASE Shutdown Sequence (162 systems)", a second rule, then the systems in reverse order:
  *
  *   ┌─ Shutdown (once)
  *   │ [46:40.867] [Down] [162/162] [ase-pl-sky] [OK] SkyRenderSyncSystem

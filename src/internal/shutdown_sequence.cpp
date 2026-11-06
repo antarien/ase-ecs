@@ -8,14 +8,22 @@
  *              log site: it writes an aligned, coloured table straight to the
  *              terminal, and routing it through ase::log would prefix every
  *              row with timestamp, level and category and break the columns.
+ *
+ *              Each step is announced by a "[..]" row that the "[OK]" row
+ *              replaces once on_stop has returned. The replacement needs a
+ *              terminal on stdout (terminal_redraw_supported); on a pipe the
+ *              finished row is drawn alone.
+ *
  *              Internal implementation detail of ase-ecs.
  *
  * @module      ase-ecs
  * @layer       1 (Core)
  * @category    process/computation
+ * @usecase     usecase:100356 - run the shutdown sequence
+ * @actor       Entity Registry Steward (ENTIREGSTE)
  * @created     2026-02-01
- * @modified    2026-10-05
- * @version     1.1.0
+ * @modified    2026-11-05
+ * @version     1.2.0
  *
  * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
  *
@@ -36,8 +44,8 @@
 #include <ase/ecs/internal/shutdown_sequence.hpp>
 #include <ase/ecs/internal/terminal_utils.hpp>
 #include <ase/log/log.hpp>
-#include <ase/log/log_lifecycle.hpp>  // die Capture-Klammer um die Abschalt-Tabelle
-#include <ase/log/log_module.hpp>
+#include <ase/log/log_lifecycle.hpp>  // the capture bracket around the shutdown table
+#include <ase/log/log_config.hpp>     // LogConfig::label of the replayed lines
 #include <ase/log/colors.hpp>
 
 #include <ase/platform/sleep.hpp>
@@ -52,16 +60,14 @@ namespace ase::ecs::internal {
 
 namespace {
 
-// Hier stand eine eigene Queue-Senke, die von der Logbibliothek erbte und den Senkenvektor des
-// Loggers von Hand austauschte. boot_logger.cpp trug dieselbe Klasse ein zweites Mal. Beide
-// sind seit 2026-08-20 durch die Klammer log::capture_begin/count/entry/end ersetzt: die
-// Senken gehoeren dem Logger, also gehoert das Umhaengen in ase-log. Ueber die Schnittstelle
-// kommt kein Typ der Logbibliothek mehr — eine kleine Ganzzahl fuer die Stufe, der Text durch
-// einen eigenen Puffer.
+// The log lines of the sequence run through the bracket log::capture_begin/count/entry/end:
+// the sinks belong to the logger, so re-routing them belongs in ase-log. No type of the log
+// library crosses the interface - a small integer for the level, the text through a buffer
+// of this file.
 
-// Puffer fuer EINE abgespielte Logzeile. Die Klammer gibt die volle Laenge zurueck, auch wenn
-// sie mehr ist als hier hineinpasst; die Schleife unten vergleicht beides und haengt eine
-// Marke an, statt eine gekuerzte Zeile als vollstaendig auszugeben.
+// Buffer for ONE replayed log line. The bracket returns the full length even when it exceeds
+// what fits here; the loop below compares both and appends a marker instead of printing a
+// shortened line as if it were complete.
 constexpr uint32_t CAPTURE_TEXT_MAX = 1024;
 
 // Level colors and names (same as log_system.cpp)
@@ -101,51 +107,52 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
     size_t total = registry.total_count();
     size_t current = 0;
 
-    // DIE EINE ZEILE, DIE IN DER LOGDATEI BLEIBT — und sie steht bewusst HIER, vor der
-    // Umleitung. Alles ab capture_begin() zeichnet ueber write_terminal, weil die Tabelle
-    // ihre Zeilen NEU SCHREIBT und dabei ANSI-Sequenzen und eine feste Spaltenform traegt;
-    // durch einen Logsink geleitet waere genau diese Form nicht mehr garantiert (Zeitstempel,
-    // Level-Praefix, Zeilenumbrueche des Sinks). DER TERMINAL-TRANSPORT WIRD DESHALB NICHT
-    // ANGETASTET — hier kommt nichts weg und nichts wird umgeleitet, es kommt EINE Zeile
-    // davor hinzu.
+    // Measured once for the whole table: stdout does not change between two rows.
+    const bool redraw = terminal_redraw_supported();
+
+    // THE ONE LINE THAT STAYS IN THE LOG FILE - and it stands HERE on purpose, before the
+    // redirection. Everything from capture_begin() on draws through write_terminal, because
+    // the table REWRITES its rows and carries ANSI sequences and a fixed column form; sent
+    // through a log sink that form would no longer be guaranteed (timestamp, level prefix,
+    // the sink's line breaks). THE TERMINAL TRANSPORT IS THEREFORE LEFT AS IT IS - nothing
+    // is removed and nothing re-routed, ONE line is added in front.
     //
-    // WARUM SIE GEBRAUCHT WIRD: ohne sie hinterlaesst ein sauberer Shutdown in der Logdatei
-    // KEINE Spur. Ein Tier, der ordentlich heruntergefahren wurde, und einer, der mitten im
-    // Tick weggerissen wurde, sehen dort identisch aus — beide enden abrupt in der letzten
-    // Arbeitszeile. Am 2026-08-28 liess sich deshalb an keinem der fuenf Tier-Logs
-    // feststellen, ob sie sauber gestoppt hatten; die Tabelle, die es beantwortet haette, war
-    // mit dem Konsolenfenster verschwunden.
+    // WHY IT IS NEEDED: without it a clean shutdown leaves NO trace in the log file. A tier
+    // that was shut down properly and one torn away mid-tick look identical there - both end
+    // abruptly in their last working line. On 2026-08-28 none of the five tier logs could
+    // tell whether its tier had stopped cleanly; the table that would have answered it had
+    // gone with the console window.
     //
-    // INF, nicht DBG: der on_stop-Downstrap je System loggt auf DBG und ist damit im
-    // Normalbetrieb (`--log +ERR +WRN +INF`) unsichtbar — gemessen 0 DBG-Zeilen in engine,
-    // dist und replica. Eine Marke, die nur bei eingeschaltetem Debug erscheint, beantwortet
-    // die Frage nicht. Das Gegenstueck beim Start steht ebenfalls auf INF.
+    // INF, not DBG: the per-system on_stop teardown logs on DBG and is therefore invisible in
+    // normal operation (`--log +ERR +WRN +INF`) - measured 0 DBG lines in engine, dist and
+    // replica. A marker that only appears with debug switched on does not answer the
+    // question. Its counterpart at startup is INF as well.
     //
-    // KEINE ABSCHLUSSZEILE IM TIER-SERVER, und das ist kein Versaeumnis: dort stellt
-    // capture_end(false) die Senken bewusst NICHT zurueck (der Prozess endet direkt danach mit
-    // _exit), eine Zeile danach ginge ins Leere. Diese Marke belegt den EINTRITT in den Abbau —
-    // dass App::shutdown() erreicht wurde statt eines harten Todes. Fuer den vollstaendigen
-    // Verlauf bleibt die Tabelle zustaendig, dort wo sie hingehoert: am Terminal.
-    // Ein eingebetteter Host (ShutdownConfig::restore_log_sinks) bekommt seine Senken am Ende
-    // zurueck; dort erreicht auch eine Zeile nach dem Abbau die Datei und den Callback.
+    // NO CLOSING LINE IN THE TIER SERVER, and that is no omission: there capture_end(false)
+    // deliberately does NOT restore the sinks (the process ends with _exit right after), and
+    // a line after it would go nowhere. This marker proves the ENTRY into teardown - that
+    // App::shutdown() was reached instead of a hard death. The full course stays with the
+    // table, where it belongs: on the terminal.
+    // An embedded host (ShutdownConfig::restore_log_sinks) gets its sinks back at the end;
+    // there a line after teardown also reaches the file and the callback.
     log::info("[Shutdown] sequence entered ({} systems)", total);
 
-    // UND SOFORT AUF DIE PLATTE. Ohne diesen Flush existiert die Zeile, erreicht die Datei
-    // aber nie: spdlog puffert, die naechste Anweisung ERSETZT mit capture_begin() die Senken,
-    // und der Prozess endet mit _exit(0) ohne einen einzigen Destruktor. Der Puffer der alten
-    // Senke wird damit von niemandem mehr geleert.
+    // AND ONTO THE DISK AT ONCE. Without this flush the line exists but never reaches the
+    // file: spdlog buffers, the next statement REPLACES the sinks with capture_begin(), and
+    // the process ends with _exit(0) without a single destructor. Nobody empties the buffer
+    // of the old sink after that.
     //
-    // GEMESSEN am 2026-08-28: die Marke stand im Binary (strings: 1 Treffer, Bau 11:54:10 neuer
-    // als die Quelle), der Kategorie-Filter liess sie durch (das Log trug DBG-Zeilen mehrerer
-    // Quellen), die Signalkette bis zum Shutdown-Pfad war intakt (SIGTERM ueber signalfd,
-    // nachgestellt mit der Maske eines echten Tiers) — und trotzdem war sie nach zwei
-    // DIST-Stopps null Mal in logs/dist-9080.log. Vier gruene Teilpruefungen und ein leeres
-    // Ergebnis: der Puffer war die einzige Stelle, an der die Zeile noch verschwinden konnte.
+    // MEASURED on 2026-08-28: the marker was in the binary (strings: 1 hit, build 11:54:10
+    // newer than the source), the category filter let it through (the log carried DBG lines
+    // of several sources), the signal chain up to the shutdown path was intact (SIGTERM via
+    // signalfd, replayed with the mask of a real tier) - and still it stood zero times in
+    // logs/dist-9080.log after two DIST stops. Four green partial checks and an empty
+    // result: the buffer was the only place left where the line could vanish.
     log::flush();
 
-    // Logausgabe umleiten, damit keine Zeile die Fortschrittstabelle unten zerreisst.
-    // Der Rueckgabewert wird nicht geprueft: false heisst "es gibt noch keinen Logger", und
-    // dann gibt es auch nichts umzuleiten — die Tabelle laeuft in beiden Faellen gleich.
+    // Redirect log output so that no line can tear the progress table below apart.
+    // The return value is not checked: false means "there is no logger yet", and then there
+    // is nothing to redirect either - the table runs the same in both cases.
     (void)log::capture_begin();
 
     std::string line = terminal_line();
@@ -161,13 +168,10 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
     header += ansi::DIM;
     header += "(";
     header += std::to_string(total);
-    header += " systems)";
+    header += total == 1 ? " system)" : " systems)";
     header += ansi::RESET;
     header += "\n";
-    header += ansi::DIM;
-    header += line;
-    header += ansi::RESET;
-    header += "\n";
+    // ONE rule per table, above its title - the same form as the boot table.
     draw_terminal(config.render_terminal_table, header);
 
     // Pre-calculate GLOBAL source totals (total systems per module/plugin)
@@ -300,20 +304,26 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
             line_suffix += ansi::RESET;
 
             // Print [..] before on_stop. Flushed on its own - it announces a step that has
-            // not run yet, and the line below replaces exactly this one.
-            std::string pending = line_content;
-            pending += ansi::YELLOW;
-            pending += "[..]";
-            pending += ansi::RESET;
-            pending += " ";
-            pending += line_suffix;
-            draw_terminal(config.render_terminal_table, pending);
+            // not run yet, and the row below replaces exactly this one. On a pipe nothing can
+            // replace it, so the announcement is not drawn there at all.
+            if (redraw) {
+                std::string pending = line_content;
+                pending += ansi::YELLOW;
+                pending += "[..]";
+                pending += ansi::RESET;
+                pending += " ";
+                pending += line_suffix;
+                draw_terminal(config.render_terminal_table, pending);
+            }
 
             // Call on_stop
             (*it)->on_stop(world.registry());
 
-            // Overwrite with [OK]
-            std::string done = "\r\x1b[K";
+            // [OK] row; on a terminal it first takes back the [..] row drawn above.
+            std::string done;
+            if (redraw) {
+                done += ansi::ERASE_ROW;
+            }
             done += line_content;
             done += ansi::OK_GREEN;
             done += "[OK]";
@@ -331,19 +341,14 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
         config.after_all_stopped(config.after_all_stopped_user);
     }
 
-    // Footer
-    std::string footer = "\n";
-    footer += ansi::DIM;
-    footer += line;
-    footer += ansi::RESET;
-    footer += "\n\n";
-    draw_terminal(config.render_terminal_table, footer);
+    // No footer rule: the table ends with its last row; the rule above the next title
+    // separates it from whatever follows.
 
-    // DER EINGEBETTETE HOST BEKOMMT SEINE SENKEN ZURUECK - und mit ihnen die Zeilen aus on_stop.
-    // capture_replay spielt sie durch genau die Senken ab, die bei capture_begin aktiv waren
-    // (beim Vivarium-Client: Callback und Datei aus init_tui_standalone), capture_end(true)
-    // haengt diese Senken wieder ein. Der Host lebt nach dem Abbau weiter; jede spaetere Zeile -
-    // Entladen der Plugins, ein Fehler beim Abbau, der naechste Neustart - braucht sie.
+    // THE EMBEDDED HOST GETS ITS SINKS BACK - and with them the lines from on_stop.
+    // capture_replay plays them through exactly the sinks that were active at capture_begin
+    // (in the Vivarium client: callback and file from init_tui_standalone), capture_end(true)
+    // hangs those sinks back in. The host lives on after teardown; every later line -
+    // unloading the plugins, an error during teardown, the next restart - needs them.
     if (config.restore_log_sinks) {
         (void)log::capture_replay();
         log::capture_end(true);
@@ -358,7 +363,7 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
 
         for (uint32_t entry_idx = 0u; entry_idx < captured; ++entry_idx) {
             const uint32_t full = log::capture_entry(entry_idx, level, text, CAPTURE_TEXT_MAX);
-            const size_t   idx  = static_cast<size_t>(level);  // schon auf 0..5 begrenzt
+            const size_t   idx  = static_cast<size_t>(level);  // already bounded to 0..5
 
             std::string replay = ansi::DIM;
             replay += "[";
@@ -376,10 +381,10 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
             replay += "] ";
             replay += text;
             if (full >= CAPTURE_TEXT_MAX) {
-                // Sichtbar machen statt verschweigen: die Klammer meldet die volle Laenge,
-                // also kann eine gekuerzte Zeile hier nicht als vollstaendige durchgehen.
+                // Made visible instead of kept quiet: the bracket reports the full length, so
+                // a shortened line cannot pass here as a complete one.
                 replay += ansi::DIM;
-                replay += " [gekuerzt]";
+                replay += " [truncated]";
                 replay += ansi::RESET;
             }
             replay += "\n";
@@ -390,10 +395,10 @@ void print_shutdown_sequence(SystemRegistry& registry, World& world,
         flush_terminal();
     }
 
-    // Die Senken werden im Tier-Server bewusst NICHT zurueckgestellt: der Prozess endet hier,
-    // und die Klammer hat ihren Inhalt oben bereits auf das Terminal abgespielt. Genau dafuer
-    // nimmt capture_end ein Argument — boot_logger.cpp und der Host-Zweig oben rufen dieselbe
-    // Funktion mit true.
+    // In the tier server the sinks are deliberately NOT restored: the process ends here, and
+    // the bracket has already replayed its content onto the terminal above. That is exactly
+    // why capture_end takes an argument - boot_logger.cpp and the host branch above call the
+    // same function with true.
     log::capture_end(false);
 }
 

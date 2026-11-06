@@ -11,9 +11,11 @@
  * @module      ase-ecs
  * @layer       1 (Core)
  * @category    structure/datatype
+ * @usecase     usecase:101524 - register the module systems
+ * @actor       Module Registration Conductor (MODUREGCON)
  * @created     2026-02-01
- * @modified    2026-08-20
- * @version     1.0.0
+ * @modified    2026-11-01
+ * @version     1.0.1
  *
  * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
  *

@@ -13,9 +13,11 @@
  * @module      ase-ecs
  * @layer       1 (Core)
  * @category    property/temporal/schedule/timing
+ * @usecase     usecase:100357 - run the tick loop
+ * @actor       Entity Registry Steward (ENTIREGSTE)
  * @created     2025-01-01
- * @modified    2026-08-20
- * @version     2.0.0
+ * @modified    2026-10-30
+ * @version     2.0.1
  *
  * LAYER RULES:
  *   Layer 0 (Foundation): NO dependencies on other ASE modules (only std::)
@@ -50,9 +52,7 @@
 
 namespace ase::ecs {
 
-// =============================================================================
 // SCHEDULE ENUM
-// =============================================================================
 
 /**
  * @brief Named schedules that define when systems execute
@@ -76,112 +76,80 @@ namespace ase::ecs {
  *   GameAetrix (2), GameAevrix (1)
  */
 enum class Schedule : uint8_t {
-    // =========================================================================
     // Lifecycle (once)
-    // =========================================================================
     Initialization = 0,       // Module setup, manager creation
     Configuration = 1,        // Cross-module initialization
     Termination = 2,          // Graceful shutdown preparation
     Finalization = 3,         // Final cleanup
 
-    // =========================================================================
     // Frame (~60Hz, variable)
-    // =========================================================================
     Reception = 10,           // Buffer drain, event clearing
     Ingestion = 11,           // Deserialization, data parsing
     Integration = 12,         // Commands, API processing
     Production = 13,          // Visual sync, render preparation
     Conclusion = 14,          // Logging, debug output
 
-    // =========================================================================
     // Kinetic (30Hz) - Fast physics simulation
-    // =========================================================================
     Dynamics = 20,            // Forces, velocity, acceleration
     Kinematics = 21,          // Position, movement, transforms
     Collision = 22,           // Collision detection, resolution
 
-    // =========================================================================
     // Reactive (20Hz) - Network synchronization
-    // =========================================================================
     Transmission = 30,        // Network send, broadcast
     Synchronization = 31,     // State sync, replication
 
-    // =========================================================================
     // Tactical (10Hz) - Fast AI and perception
-    // =========================================================================
     Perception = 40,          // Sensing, awareness, detection
     Reaction = 41,            // Quick decisions, responses
     Navigation = 42,          // Pathfinding, movement planning
     Evaluation = 43,          // Assessment, scoring
 
-    // =========================================================================
     // Adaptive (5Hz) - AI planning and coordination
-    // =========================================================================
     Deliberation = 50,        // Planning, reasoning
     Aggregation = 51,         // Data collection, rollups
     Correlation = 52,         // Pattern matching, relationships
     Coordination = 53,        // Multi-agent coordination
 
-    // =========================================================================
     // Progressive (2Hz) - Slow adjustments
-    // =========================================================================
     Modulation = 60,          // Intensity adjustments
     Regulation = 61,          // Homeostasis, balance
     Adaptation = 62,          // Learning, adjustment
 
-    // =========================================================================
     // Cyclic (1Hz) - Regular intervals
-    // =========================================================================
     Dissemination = 70,       // Hub publish, broadcasting
     Preservation = 71,        // Database write, persistence
     Observation = 72,         // Monitoring, watching
 
-    // =========================================================================
     // Gradual (10s) - Slow accumulation
-    // =========================================================================
     Accumulation = 80,        // Statistics gathering
     Consolidation = 81,       // Data merging
 
-    // =========================================================================
     // Incremental (1min) - Maintenance tasks
-    // =========================================================================
     Maintenance = 90,         // GC, cleanup
     Reconciliation = 91,      // Consistency checks
 
-    // =========================================================================
     // Ambient (5min) - Very slow processes
-    // =========================================================================
     Maturation = 100,         // Slow growth
     Degradation = 101,        // Slow decay
 
-    // =========================================================================
     // Periodic (15min) - Periodic processes
-    // =========================================================================
     Regeneration = 110,       // Recovery, healing
     Decomposition = 111,      // Breakdown
 
-    // =========================================================================
     // Epochal (1h) - Hourly processes
-    // =========================================================================
     Evolution = 120,          // Long-term change
     Erosion = 121,            // Geological processes
 
-    // =========================================================================
     // Extended (6h) - Quarter-day processes
-    // =========================================================================
     Succession = 130,         // Progression
     Transformation = 131,     // Major change
 
-    // =========================================================================
     // Diurnal (24h real-time) - Daily processes
-    // =========================================================================
     Culmination = 140,        // Daily peak
     Renewal = 141,            // Daily reset
 
-    // =========================================================================
-    // =========================================================================
     // GAME-TIME SCHEDULES (Antarian Calendar - Lexicon Temporis)
-    // =========================================================================
+    //
     // These schedules are triggered by in-game time, NOT real-time.
     // See ARCH_ASE_CALENDAR.md for complete nomenclature and calculations.
     //
@@ -196,82 +164,56 @@ enum class Schedule : uint8_t {
     //   MATRUM AURIX   (Aurora-A) = 13 TUMBRAE
     //   AMILOX SILENTUM (Amilo)   = 19 TUMBRAE
     //   SCORPIX OCCULTUM (Scorpii)= 27 TUMBRAE
-    // =========================================================================
-    // =========================================================================
 
-    // =========================================================================
     // Diurnal Game-Time (1 TUMBRAE = 30 game-hours = 20 min real-time)
-    // =========================================================================
     GameDawn = 150,           // VELUXIS - Game day starts (dawn)
     GameDusk = 151,           // CREPEX - Game day ends (dusk)
     GameMidnight = 152,       // NOXUMBRAE - Midnight (Serpens trigger!)
 
-    // =========================================================================
     // Novendrix (1 NOVENDRIX = 9 TUMBRAE = 3h real-time)
-    // =========================================================================
     Novendrix = 160,          // Weekly game events (9-day week)
     Serpum = 161,             // Day 6 of week - Serpens day (DANGEROUS!)
     Fractum = 162,            // Day 8 of week - Day of the Broken
 
-    // =========================================================================
     // Lunbrex (1 LUNBREX = 27 TUMBRAE = 9h real-time)
-    // =========================================================================
     Lunbrex = 170,            // Monthly game events (27-day month)
     ScorpiiCycle = 171,       // Scorpii moon full cycle complete
 
-    // =========================================================================
     // Moon Conjunctions (CONIUNCTRIX) - Two-Moon Events
-    // =========================================================================
     CrucixAurix = 175,        // Aurora Crossing (117 TUMBRAE = 39h)
     LunixSanguex = 176,       // Bloodmoon (513 TUMBRAE = 7.1 days)
 
-    // =========================================================================
     // Temporix (Seasons - ~1000 TUMBRAE each, ~2 weeks real-time)
-    // =========================================================================
     Temporix = 180,           // Season change events
     GlacixUmbrae = 181,       // Frostschatten starts (997 TUMBRAE)
     IgnixVertum = 182,        // Glutwende starts (1009 TUMBRAE)
     HalitrixNebulox = 183,    // Nebelhauch starts (1013 TUMBRAE)
     SaltatrixMortum = 184,    // Schattentanz starts - SERPENS ACTIVE! (1002 TUMBRAE)
 
-    // =========================================================================
     // Stellar Cycles
-    // =========================================================================
     PulsatrixAntarix = 185,   // Antares pulsation phase change (1087 TUMBRAE = 15 days)
     CyclumArcturix = 186,     // Arcturus visibility change (2011 TUMBRAE = 28 days)
 
-    // =========================================================================
     // Rare Multi-Moon Conjunctions
-    // =========================================================================
     TrinitaxLuminex = 187,    // Three-Moon conjunction (2223 TUMBRAE = 31 days)
 
-    // =========================================================================
     // Vectum Mortis (1 VECTUM = 4021 TUMBRAE = 56 days real-time)
-    // =========================================================================
     VectumMortis = 190,       // Yearly game events
     NewVectum = 191,          // Year change celebration
 
-    // =========================================================================
     // Extreme Rare Events
-    // =========================================================================
     TenebraxMagnorum = 195,   // The Great Darkness - All 4 moons align!
                               // (6669 TUMBRAE = 93 days real-time)
 
-    // =========================================================================
     // Epochal Game-Time (AETRIX)
-    // =========================================================================
     AetrixMinorum = 200,      // Small epoch (1 Arcturus = 4022 TUMBRAE)
     AetrixMaiorum = 201,      // Great epoch (10 Arcturus = 40220 TUMBRAE)
 
-    // =========================================================================
     // Aevrix (100 Arcturus cycles = ~15 years real-time)
-    // =========================================================================
     Aevrix = 210,             // Aeon events (402200 TUMBRAE)
 };
 
-// =============================================================================
 // HELPER FUNCTIONS
-// =============================================================================
 
 /**
  * @brief Get the frequency tier name for a schedule
@@ -440,8 +382,8 @@ struct ScheduleNameRow {
 /**
  * @brief Schedule names, in tier order (for logging).
  *
- * The comments below are the tiers, kept from the switch this replaced — they are the reason
- * the order is not alphabetical and must survive any future edit.
+ * The comments below name the tiers; they are the reason the order is not alphabetical and
+ * must survive any future edit.
  */
 inline constexpr ScheduleNameRow kScheduleNames[] = {
     // Lifecycle
@@ -502,9 +444,7 @@ inline constexpr ScheduleNameRow kScheduleNames[] = {
     {Schedule::Culmination,      "Culmination"},
     {Schedule::Renewal,          "Renewal"},
 
-    // =========================================================================
     // GAME-TIME SCHEDULES (Antarian Calendar - Lexicon Temporis)
-    // =========================================================================
     // GameTumbrae (1 TUMBRAE = 30 hours = 20 min real-time)
     {Schedule::GameDawn,         "GameDawn"},
     {Schedule::GameDusk,         "GameDusk"},
@@ -572,13 +512,3 @@ static_assert(kScheduleNameCount == 66, "schedule name table lost or gained a ro
 }
 
 }  // namespace ase::ecs
-
-// Hier stand eine Spezialisierung von std::hash fuer Schedule. Ihr eigener Kommentar nannte
-// ihren Zweck — "required for unordered_map" — und damit auch den Grund, warum sie weg ist:
-// den Behaeltertyp, fuer den sie gebraucht wurde, gibt es in diesem Baum nicht mehr, seit
-// ase-containers ihn ersetzt hat.
-//
-// GEMESSEN vor dem Loeschen: baumweit kein einziger Treffer auf unordered_map<Schedule>,
-// unordered_set<Schedule> oder hash<Schedule> ausser der Spezialisierung selbst. Sie hat
-// keinen Nutzer und kann keinen bekommen, ohne dass jemand zuerst den verbotenen Behaelter
-// zurueckholt.
