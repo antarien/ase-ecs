@@ -37,10 +37,10 @@
  * @layer       1 (Core)
  * @category    ecs/module
  * @usecase     usecase:101524 - register the module systems
- * @actor       Module Registration Conductor (MODUREGCON)
+ * @actor       Unit Lifecycle Conductor (UNITLIFCON)
  * @created     2026-01-16
- * @modified    2026-10-30
- * @version     1.2.1
+ * @modified    2026-11-10
+ * @version     1.2.2
  *
  * CORE INFRASTRUCTURE COMPLIANCE
  *

@@ -14,10 +14,10 @@
  * @layer       1 (Core)
  * @category    structure/datatype
  * @usecase     usecase:101524 - register the module systems
- * @actor       Module Registration Conductor (MODUREGCON)
+ * @actor       Unit Lifecycle Conductor (UNITLIFCON)
  * @created     2026-02-01
- * @modified    2026-10-30
- * @version     1.0.1
+ * @modified    2026-11-10
+ * @version     1.0.2
  *
  * CORE INFRASTRUCTURE COMPLIANCE
  *
