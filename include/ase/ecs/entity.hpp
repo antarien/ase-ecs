@@ -14,7 +14,11 @@
  * @category    structure/datatype
  * @created     2026-08-30
  * @modified    2026-08-30
- * @version     1.0.0
+ * @version     00.01.13.00063 [feat]
+ *
+ * Copyright (c) Jan Ohlmann. All rights reserved.
+ * Licensed to ANTARES SIMULACAO LTDA. Use is governed by LICENSE.md and PJV.md in this repository.
+ * SPDX-License-Identifier: LicenseRef-ASE-LIC
  *
  * WHY THIS FILE EXISTS (split from system.hpp, 2026-08-30)
  *

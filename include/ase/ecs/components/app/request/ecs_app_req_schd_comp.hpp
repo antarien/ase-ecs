@@ -20,7 +20,11 @@
  * @parity      server_only
  * @created     2026-10-25
  * @modified    2026-10-25
- * @version     1.0.0
+ * @version     00.01.13.00063 [feat]
+ *
+ * Copyright (c) Jan Ohlmann. All rights reserved.
+ * Licensed to ANTARES SIMULACAO LTDA. Use is governed by LICENSE.md and PJV.md in this repository.
+ * SPDX-License-Identifier: LicenseRef-ASE-LIC
  *
  * WHY THE TYPE STANDS IN L1: the scheduler (L1) must never read the calendar (L3), and the
  * calendar must never call the App. The request is the seam: L1 owns the type and knows nothing

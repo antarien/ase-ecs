@@ -17,7 +17,11 @@
  * @actor       Entity Registry Steward (ENTIREGSTE)
  * @created     2025-01-01
  * @modified    2026-10-30
- * @version     2.0.1
+ * @version     00.01.13.00063 [feat]
+ *
+ * Copyright (c) Jan Ohlmann. All rights reserved.
+ * Licensed to ANTARES SIMULACAO LTDA. Use is governed by LICENSE.md and PJV.md in this repository.
+ * SPDX-License-Identifier: LicenseRef-ASE-LIC
  *
  * LAYER RULES:
  *   Layer 0 (Foundation): NO dependencies on other ASE modules (only std::)

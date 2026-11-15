@@ -16,7 +16,11 @@
  * @actor       Entity Component System (ECS)
  * @created     2025-12-01
  * @modified    2026-10-25
- * @version     1.4.0
+ * @version     00.01.13.00063 [feat]
+ *
+ * Copyright (c) Jan Ohlmann. All rights reserved.
+ * Licensed to ANTARES SIMULACAO LTDA. Use is governed by LICENSE.md and PJV.md in this repository.
+ * SPDX-License-Identifier: LicenseRef-ASE-LIC
  *
  * CORE INFRASTRUCTURE IMPLEMENTATION COMPLIANCE
  *

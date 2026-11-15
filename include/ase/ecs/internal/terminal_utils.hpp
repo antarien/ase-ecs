@@ -15,7 +15,11 @@
  * @actor       Terminal Output Scribe (TERMOUTSCR)
  * @created     2026-02-01
  * @modified    2026-10-30
- * @version     1.1.1
+ * @version     00.01.13.00063 [feat]
+ *
+ * Copyright (c) Jan Ohlmann. All rights reserved.
+ * Licensed to ANTARES SIMULACAO LTDA. Use is governed by LICENSE.md and PJV.md in this repository.
+ * SPDX-License-Identifier: LicenseRef-ASE-LIC
  *
  * CORE INFRASTRUCTURE COMPLIANCE
  *

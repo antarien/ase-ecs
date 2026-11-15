@@ -13,6 +13,10 @@ closing it. This file closes it.
 The doctest lookup is the self-contained form of the core siblings (codegen, console, convert,
 markdown all do exactly this): find_package first, FetchContent as the fallback. It is a no-op
 when a parent scope has already made doctest available, so a tier build pays for it once.
+
+Copyright (c) Jan Ohlmann. All rights reserved.
+Licensed to ANTARES SIMULACAO LTDA. Use is governed by LICENSE.md and PJV.md in this repository.
+SPDX-License-Identifier: LicenseRef-ASE-LIC
 ]]
 find_package(doctest QUIET)
 if(NOT doctest_FOUND)

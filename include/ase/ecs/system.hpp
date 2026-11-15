@@ -26,7 +26,11 @@
  * @usecase     usecase:100232 - author ecs system
  * @created     2026-01-15
  * @modified    2026-10-11
- * @version     1.1.0
+ * @version     00.01.13.00063 [feat]
+ *
+ * Copyright (c) Jan Ohlmann. All rights reserved.
+ * Licensed to ANTARES SIMULACAO LTDA. Use is governed by LICENSE.md and PJV.md in this repository.
+ * SPDX-License-Identifier: LicenseRef-ASE-LIC
  *
  * WHAT THIS HEADER GIVES AND WHAT IT DOES NOT
  *
