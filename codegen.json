@@ -41,6 +41,31 @@
                 "file": "app/tag/ecs_app_quit_req_tag.hpp"
             },
             {
+                "name": "EcsAppReqSchdComponent",
+                "description": "EcsAppReqSchdComponent - request to fire one game-time schedule",
+                "fields": [
+                    {
+                        "name": "schedule",
+                        "type": "uint32",
+                        "default": "0",
+                        "description": "numeric value of the game-time Schedule to fire (150 to 210)"
+                    },
+                    {
+                        "name": "sequence",
+                        "type": "uint32",
+                        "default": "0",
+                        "description": "order of the crossing within the tick, lowest fires first"
+                    },
+                    {
+                        "name": "game_dt",
+                        "type": "float32",
+                        "default": "0.0f",
+                        "description": "game seconds of the period this run stands for, handed in as dt"
+                    }
+                ],
+                "file": "app/request/ecs_app_req_schd_comp.hpp"
+            },
+            {
                 "name": "EcsAppRgnGateTag",
                 "description": "EcsAppRgnGateTag - This process runs region-bound simulation and carries the gate",
                 "fields": [],
