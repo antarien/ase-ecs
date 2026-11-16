@@ -1,22 +1,23 @@
 # ase-ecs
 
 **Design:** DSGN_016 (AEC//CORE — World Engine Core), DSGN_021 (GPB//DGOM, GPB//RBAF)
+**Use case:** usecase:100357 run the tick loop
 
 [![Layer](https://img.shields.io/badge/Layer-1%20Core-green.svg)]()
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)]()
 
-> Entity Component System foundation with Bevy-style scheduling built on EnTT
+> Entity Component System foundation with tiered named scheduling built on EnTT
 
 Part of [ASE - Antares Simulation Engine](../../..)
 
 ## Overview
 
-`ase-ecs` is the foundational ECS (Entity Component System) module for ASE, providing a thin wrapper around the [EnTT](https://github.com/skypjack/entt) library with a Bevy-inspired application builder and custom named schedule system for organizing game logic execution. The App builder provides the top-level registration API where modules and plugins register their systems into named schedules using add_system() and add_system_with() for ordering constraints. The schedule system implements 66 named schedules organized into 21 tiers (Initialization, Dynamics, Replication, Persistence, etc.) with configurable tick rates per tier — this is a custom ASE design, NOT Bevy's schedule system (Bevy schedule names like Startup, Update, PostUpdate are explicitly forbidden). The System base class defines the contract all game systems implement: name(), on_start(), tick(), and on_stop() with the critical constraint that systems must be stateless (no member variables). The Registry type wraps EnTT's entt::registry providing entity creation, component emplacement, and view-based iteration. Every module from Layer 1 through Layer 4 depends on ase-ecs as the universal data model.
+`ase-ecs` is the foundational ECS (Entity Component System) module for ASE, providing a thin wrapper around the [EnTT](https://github.com/skypjack/entt) library with a declarative application builder and custom named schedule system for organizing game logic execution. The App builder provides the top-level registration API where modules and plugins register their systems into named schedules using add_system() and add_system_with() for ordering constraints. The schedule system implements 66 named schedules organized into 21 tiers (Initialization, Dynamics, Replication, Persistence, etc.) with configurable tick rates per tier — this is a custom ASE design with its own schedule names (generic names like Startup, Update, PostUpdate are not used). The System base class defines the contract all game systems implement: name(), on_start(), tick(), and on_stop() with the critical constraint that systems must be stateless (no member variables). The Registry type wraps EnTT's entt::registry providing entity creation, component emplacement, and view-based iteration. Every module from Layer 1 through Layer 4 depends on ase-ecs as the universal data model.
 
 ## Features
 
 - **EnTT Wrapper**: Clean C++ API over EnTT's entity-component registry
-- **Bevy-Style App Builder**: Declarative system registration with `.add_kernel()`, `.add_module()`, `.add_plugin()`
+- **App Builder**: Declarative system registration with `.add_kernel()`, `.add_module()`, `.add_plugin()`
 - **Named Schedules**: Human-readable execution phases (Startup, Update, FixedUpdate, Replication, etc.)
 - **System Dependencies**: Run-after constraints for system ordering
 - **Fixed Timestep**: Built-in fixed update loop (30Hz) with accumulator
