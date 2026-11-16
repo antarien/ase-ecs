@@ -4,7 +4,7 @@
  * ASE CORE INFRASTRUCTURE HEADER
  *
  * @file        schedule.hpp
- * @brief       Bevy-inspired named schedule system for ASE
+ * @brief       Named schedule system for ASE
  * @description Defines 66 schedules across 21 frequency tiers for 5000+ systems.
  *              42 Real-Time schedules (Lifecycle to Diurnal) plus 24 Game-Time
  *              schedules based on the Antarian Calendar (Lexicon Temporis).
@@ -61,7 +61,7 @@ namespace ase::ecs {
 /**
  * @brief Named schedules that define when systems execute
  *
- * Inspired by Bevy's schedule system. 66 schedules across 21 frequency tiers.
+ * 66 schedules across 21 frequency tiers.
  *
  * Schedule execution order:
  *   Initialization (once) → MainLoop (repeating) → Finalization (once)
