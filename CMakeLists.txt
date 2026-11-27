@@ -95,6 +95,11 @@ add_library(${PROJECT_NAME} STATIC
     gewesen, die Zusage darin nicht wahr.
     ]]
     include/ase/ecs/app.hpp
+    include/ase/ecs/app_assembly.hpp
+    include/ase/ecs/app_lifecycle.hpp
+    include/ase/ecs/app_plane.hpp
+    include/ase/ecs/app_system_builder.hpp
+    include/ase/ecs/app_unit.hpp
     include/ase/ecs/entity.hpp
     include/ase/ecs/system.hpp
     include/ase/ecs/world.hpp

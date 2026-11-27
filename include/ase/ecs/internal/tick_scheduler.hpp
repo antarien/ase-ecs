@@ -59,7 +59,7 @@ namespace ase::ecs::internal {
 struct TierConfig {
     const char* name;           // Tier name (e.g., "Frame", "Kinetic")
     float interval;             // Interval in seconds (0 = every frame)
-    bool fixed_timestep;        // Use while-loop for fixed timestep (physics)
+    bool fixed_timestep;        // Physics tier: one step per tick, frame time clamped to interval
     const Schedule* schedules;  // Array of schedules in this tier
     size_t schedule_count;      // Number of schedules
 };
@@ -164,9 +164,9 @@ public:
     /**
      * The longest frame tick() takes as it is; a longer dt is clamped to it and the rest is lost.
      *
-     * Read by whoever has to bring a long real span into the App WITHOUT losing it: the embedded
-     * host after the app returns from the background splits the span into ticks of exactly this
-     * length (KernelEmbeddedHost::advance). Read here, from the running scheduler, so that the
+     * Read by the embedded host for the one tick of a frame: it ticks min(elapsed, this ceiling)
+     * once and files the absolute real position on its port, where ase-time lays its clock in one
+     * write (KernelEmbeddedHost::advance). Read here, from the running scheduler, so that the
      * number has exactly one home and no caller holds it a second time.
      */
     [[nodiscard]] float max_frame_time() const noexcept { return max_frame_time_; }
@@ -176,8 +176,8 @@ public:
      *
      * Counted where the tier runs, never derived from time: every schedule of a tier runs
      * exactly when its tier runs, so the count of the tier is the count of each of its
-     * schedules, and a fixed-timestep tier that catches up runs - and counts - several times in
-     * one tick. Conclusion runs once at the end of every tick. A game-time schedule counts each
+     * schedules, and the physics tier runs - and counts - exactly once per tick, its step the frame
+     * time clamped to its interval (B0967). Conclusion runs once at the end of every tick. A game-time schedule counts each
      * run its drain reported through note_event_run().
      *
      * @param schedule the schedule to look up

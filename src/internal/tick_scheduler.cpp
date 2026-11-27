@@ -14,8 +14,8 @@
  * @usecase     usecase:100357 - run the tick loop
  * @actor       Entity Component System (ECS)
  * @created     2026-02-01
- * @modified    2026-10-25
- * @version     00.01.13.00063 [feat]
+ * @modified    2026-11-25
+ * @version     00.01.25.00075 [feat]
  *
  * Copyright (c) Jan Ohlmann. All rights reserved.
  * Licensed to ANTARES SIMULACAO LTDA. Use is governed by LICENSE.md and PJV.md in this repository.
@@ -200,17 +200,17 @@ void TickScheduler::tick(float dt, ScheduleRunner run, EventDrain drain, void* u
             }
             ++tier_runs_[tier];
         } else if (config.fixed_timestep) {
-            // Fixed timestep (physics): use while-loop
-            accumulators_[tier] += dt;
-            while (accumulators_[tier] >= config.interval) {
-                for (size_t i = 0; i < config.schedule_count; ++i) {
-                    run(user, config.schedules[i], config.interval);
-                }
-                ++tier_runs_[tier];
-                accumulators_[tier] -= config.interval;
+            // Physics tier: EXACTLY ONE STEP PER TICK, THE FRAME TIME CLAMPED TO THE TIER'S INTERVAL (register
+            // B0967). A frame slower than the interval lets the simulation run slower than real time; this tier
+            // keeps no account of time.
+            const float step = dt < config.interval ? dt : config.interval;
+            for (size_t i = 0; i < config.schedule_count; ++i) {
+                run(user, config.schedules[i], step);
             }
+            ++tier_runs_[tier];
         } else {
-            // Variable timestep: run once per interval
+            // Variable timestep: at most one run per tick with the interval as dt; the account never keeps a
+            // whole interval after a run.
             accumulators_[tier] += dt;
             if (accumulators_[tier] >= config.interval) {
                 for (size_t i = 0; i < config.schedule_count; ++i) {
@@ -218,6 +218,9 @@ void TickScheduler::tick(float dt, ScheduleRunner run, EventDrain drain, void* u
                 }
                 ++tier_runs_[tier];
                 accumulators_[tier] -= config.interval;
+                if (accumulators_[tier] >= config.interval) {
+                    accumulators_[tier] = 0.0f;
+                }
             }
         }
     }

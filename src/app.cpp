@@ -456,8 +456,8 @@ void App::run_game_events() {
     }
 
     /**
-     * ORDER BY THE CROSSING, NOT BY THE ENTITY. When a long span is caught up, several boundaries
-     * fall into one tick - a dawn and the dusk after it, a new TUMBRAE and the season that starts
+     * ORDER BY THE CROSSING, NOT BY THE ENTITY. When one tick lays a long span (a jump, a return
+     * from the background), several boundaries fall into it - a dawn and the dusk after it, a new TUMBRAE and the season that starts
      * with it - and they fire in the order the calendar crossed them.
      */
     registry.sort<EcsAppReqSchdComponent>(
@@ -568,9 +568,9 @@ void App::run() {
      * the wake-up latency of the scheduler as a fresh error in EVERY frame and drifts below the
      * nominal rate for good. sleep_until_nanos hands the deadline itself to the kernel; oversleeping
      * one frame shortens the sleep of the next by exactly the same amount - the long-term rate IS
-     * the nominal rate. When a tick overruns its budget, the deadline is ANCHORED ANEW instead of
-     * caught up: a catch-up would fire several frames without sleep in a row after a stall, and
-     * the tier accumulators work with the measured dt anyway - lost time is already booked there.
+     * the nominal rate. When a tick overruns its budget, the deadline is ANCHORED ANEW from now:
+     * the next frame waits its full interval, and the tiers step with the measured dt, each fixed
+     * tier at most one interval per tick.
      */
     constexpr int64_t FrameIntervalNanos = static_cast<int64_t>(
         static_cast<float>(utils::NANOS_PER_SECOND) / schedule_hz(Schedule::Reception));

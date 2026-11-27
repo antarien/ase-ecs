@@ -101,3 +101,34 @@ add_test(NAME ase-ecs-host-test COMMAND ase-ecs-host-test)
 set_target_properties(ase-ecs-host-test PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+#[[
+THE FIVE PART HEADERS OF App (app_assembly, app_lifecycle, app_plane, app_system_builder, app_unit)
+get a target of their own as well, case usecase:100357 - run the tick loop. Its one source includes
+the parts and never app.hpp: app.hpp still carries the same definitions until it becomes their
+collector, so a unit that included both would see every name twice. This target is the unit that
+compiles the parts on their own and shows that the App they carry assembles a module, ticks its
+system and holds it by its plane.
+]]
+add_executable(ase-ecs-app-parts-test
+    test_ecs_app_parts.cpp
+)
+
+target_compile_definitions(ase-ecs-app-parts-test
+    PRIVATE
+        DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+)
+
+target_compile_features(ase-ecs-app-parts-test PRIVATE cxx_std_20)
+
+target_link_libraries(ase-ecs-app-parts-test
+    PRIVATE
+        ase::ecs
+        doctest::doctest
+)
+
+add_test(NAME ase-ecs-app-parts-test COMMAND ase-ecs-app-parts-test)
+
+set_target_properties(ase-ecs-app-parts-test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)

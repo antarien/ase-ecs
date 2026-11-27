@@ -71,8 +71,9 @@ namespace ase::ecs {
  * value outside that range is refused by the App with an error line, because a request for a
  * real-time schedule would run it a second time in the same tick.
  *
- * sequence orders the requests of one tick: when a long span is caught up, several boundaries
- * fall into one tick, and they fire in the order the calendar crossed them, lowest first.
+ * sequence orders the requests of one tick: when one tick lays a long span (a jump, a return
+ * from the background), several boundaries fall into it, and they fire in the order the
+ * calendar crossed them, lowest first.
  */
 struct EcsAppReqSchdComponent {
     uint32_t schedule = 0;  // numeric value of the game-time Schedule to fire (150 to 210)
